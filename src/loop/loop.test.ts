@@ -100,6 +100,27 @@ describe("runLoop", () => {
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("ok");
   });
 
+  test("coerces an undefined tool result (e.g. writeFile's void return) to a valid JSON value", async () => {
+    const tools = makeTools(async () => undefined as unknown as string);
+    const model = new MockLanguageModelV4({
+      doStream: [
+        streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+        streamResult(textOnlyChunks("Done")),
+      ],
+    });
+    const events = await collect(
+      runLoop({ model, tools, messages: baseMessages, permissionMode: "auto" }),
+    );
+
+    const update = events.find(
+      (e): e is Extract<LoopEvent, { type: "messages-updated" }> =>
+        e.type === "messages-updated" && e.messages.at(-1)?.role === "tool",
+    );
+    const toolMessage = update?.messages.at(-1);
+    const roundTripped = JSON.parse(JSON.stringify(toolMessage));
+    expect(roundTripped.content[0].output).toEqual({ type: "json", value: null });
+  });
+
   test("read-only mode blocks a write tool instead of executing it", async () => {
     const executed: unknown[] = [];
     const tools = makeTools(async (input) => {

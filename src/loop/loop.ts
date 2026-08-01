@@ -124,7 +124,7 @@ export async function* runLoop(opts: {
         type: "tool-result",
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        output: { type: "json", value: toolResult as JSONValue },
+        output: { type: "json", value: (toolResult ?? null) as JSONValue },
       });
     }
     messages.push({ role: "tool", content: toolResults });
