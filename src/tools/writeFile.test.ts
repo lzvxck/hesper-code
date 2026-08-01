@@ -57,6 +57,12 @@ describe("writeFile", () => {
     }
   });
 
+  test("creates missing nested parent directories before writing", () => {
+    const filePath = join(tmpRoot, "nested", "deeper", "out.txt");
+    expect(() => writeFile(filePath, "hello nested")).not.toThrow();
+    expect(readFileSync(filePath, "utf8")).toBe("hello nested");
+  });
+
   test("retries on EBUSY then succeeds", () => {
     const filePath = join(tmpRoot, "locked.txt");
     let failuresLeft = 2;

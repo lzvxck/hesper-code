@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 
 const RESERVED_NAMES = new Set([
@@ -63,6 +63,7 @@ export function writeFile(
   const finalContent = eol === "CRLF" ? lf.replace(/\n/g, "\r\n") : lf;
 
   const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(tempPath, finalContent, "utf8");
 
   for (let attempt = 1; attempt <= MAX_RENAME_ATTEMPTS; attempt++) {
