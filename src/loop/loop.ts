@@ -23,7 +23,7 @@ export async function* runLoop(opts: {
   approvalPrompt?: ApprovalPrompt;
   maxIterations?: number;
   tokenBudget?: number;
-}): AsyncGenerator<LoopEvent> {
+}): AsyncGenerator<LoopEvent, ModelMessage[]> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const tokenBudget = opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
   const messages: ModelMessage[] = [...opts.messages];
@@ -53,18 +53,18 @@ export async function* runLoop(opts: {
           toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
         } else if (part.type === "error") {
           yield { type: "error", error: String(part.error) };
-          return;
+          return messages;
         }
       }
       totalTokens += (await result.usage).totalTokens ?? 0;
     } catch (err) {
       yield { type: "error", error: String(err) };
-      return;
+      return messages;
     }
 
     if (toolCalls.length === 0) {
       yield { type: "done", reason: "no-tool-call" };
-      return;
+      return messages;
     }
 
     const assistantContent: AssistantContent = [];
@@ -111,9 +111,10 @@ export async function* runLoop(opts: {
 
     if (totalTokens > tokenBudget) {
       yield { type: "done", reason: "token-budget" };
-      return;
+      return messages;
     }
   }
 
   yield { type: "done", reason: "max-iterations" };
+  return messages;
 }
