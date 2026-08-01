@@ -1,0 +1,35 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { getConfigDir } from "./paths";
+
+const originalPlatform = process.platform;
+const originalLocalAppData = process.env.LOCALAPPDATA;
+
+function setPlatform(platform: string): void {
+  Object.defineProperty(process, "platform", { value: platform });
+}
+
+afterEach(() => {
+  setPlatform(originalPlatform);
+  process.env.LOCALAPPDATA = originalLocalAppData;
+});
+
+describe("getConfigDir", () => {
+  test("win32 with LOCALAPPDATA set returns joined path", () => {
+    setPlatform("win32");
+    process.env.LOCALAPPDATA = "C:\\Users\\test\\AppData\\Local";
+    expect(getConfigDir()).toBe(join("C:\\Users\\test\\AppData\\Local", "vela"));
+  });
+
+  test("win32 without LOCALAPPDATA throws", () => {
+    setPlatform("win32");
+    delete process.env.LOCALAPPDATA;
+    expect(() => getConfigDir()).toThrow();
+  });
+
+  test("posix returns ~/.vela", () => {
+    setPlatform("linux");
+    expect(getConfigDir()).toBe(join(homedir(), ".vela"));
+  });
+});
