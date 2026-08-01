@@ -11,6 +11,11 @@ const originalHome = process.env.HOME;
 let tmpRoot: string;
 let configDir: string;
 
+function restoreEnv(key: string, original: string | undefined): void {
+  if (original === undefined) delete process.env[key];
+  else process.env[key] = original;
+}
+
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "vela-config-test-"));
   if (process.platform === "win32") process.env.LOCALAPPDATA = tmpRoot;
@@ -20,8 +25,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.LOCALAPPDATA = originalLocalAppData;
-  process.env.HOME = originalHome;
+  restoreEnv("LOCALAPPDATA", originalLocalAppData);
+  restoreEnv("HOME", originalHome);
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 

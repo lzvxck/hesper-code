@@ -10,9 +10,14 @@ function setPlatform(platform: string): void {
   Object.defineProperty(process, "platform", { value: platform });
 }
 
+function restoreEnv(key: string, original: string | undefined): void {
+  if (original === undefined) delete process.env[key];
+  else process.env[key] = original;
+}
+
 afterEach(() => {
   setPlatform(originalPlatform);
-  process.env.LOCALAPPDATA = originalLocalAppData;
+  restoreEnv("LOCALAPPDATA", originalLocalAppData);
 });
 
 describe("getConfigDir", () => {
