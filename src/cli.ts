@@ -25,7 +25,10 @@ function parseTaskArgs(argv: string[]): { resuming: boolean; resumeId: string | 
 
   args.splice(resumeIndex, 1);
   const next = args[resumeIndex];
-  const resumeId = next !== undefined && !next.startsWith("-") ? next : undefined;
+  // "/mode" is never a session id, even though it doesn't start with "-": it's the mode-
+  // cycle command, and must fall through to the taskText below so `run()` can special-case
+  // it against the resume target instead of throwing "session not found".
+  const resumeId = next !== undefined && next !== "/mode" && !next.startsWith("-") ? next : undefined;
   if (resumeId !== undefined) args.splice(resumeIndex, 1);
 
   return { resuming: true, resumeId, taskText: args.join(" ").trim() };
@@ -36,11 +39,11 @@ function loadOrCreateSession(
   resumeId: string | undefined,
   sessionsDir: string,
   loadAgentsFileFn: typeof loadAgentsFileReal,
-): SessionState {
+): SessionState<ModelMessage> {
   if (resuming) {
     const id = resumeId ?? findMostRecentSession(sessionsDir);
     if (!id) throw new Error("No session to resume.");
-    return loadSession(id, sessionsDir);
+    return loadSession<ModelMessage>(id, sessionsDir);
   }
 
   const agentsContent = loadAgentsFileFn(process.cwd());
@@ -106,7 +109,24 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   const sessionsDir = deps.sessionsDir ?? join(getConfigDir(), "sessions");
   const loadAgentsFileFn = deps.loadAgentsFile ?? loadAgentsFileReal;
 
-  let session: SessionState;
+  // `/mode` is a mode-cycle command, not a task for the model. It always operates on the
+  // resume target (an explicit --resume id, or the most-recent session) and never creates
+  // a new session just to cycle it — checked before loadOrCreateSession so a bare `/mode`
+  // (no --resume) doesn't fall into the new-session path below.
+  if (taskText === "/mode") {
+    const id = resumeId ?? findMostRecentSession(sessionsDir);
+    if (!id) {
+      console.error("No session to cycle the mode of.");
+      return 1;
+    }
+    const session = loadSession(id, sessionsDir);
+    session.permissionMode = cycleMode(session.permissionMode);
+    saveSession(session, sessionsDir);
+    console.log(`Session ${session.id}: permission mode is now ${session.permissionMode}`);
+    return 0;
+  }
+
+  let session: SessionState<ModelMessage>;
   try {
     session = loadOrCreateSession(resuming, resumeId, sessionsDir, loadAgentsFileFn);
   } catch (err) {
@@ -114,18 +134,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
     return 1;
   }
 
-  // `/mode` is a mode-cycle command, not a task for the model: no runLoop.ts's own turn
-  // boundary to hook a mid-session command into for a single-task-per-invocation CLI (see
-  // round 5's judgment call notes), so it's handled here as its own invocation instead.
-  if (taskText === "/mode") {
-    session.permissionMode = cycleMode(session.permissionMode);
-    saveSession(session, sessionsDir);
-    console.log(`Permission mode is now: ${session.permissionMode}`);
-    return 0;
-  }
+  if (!resuming) console.log(`Session ${session.id} created.`);
 
   if (!resuming || taskText) {
-    (session.messages as ModelMessage[]).push({ role: "user", content: taskText });
+    session.messages.push({ role: "user", content: taskText });
   }
 
   const getGroqModelFn = deps.getGroqModel ?? getGroqModelReal;
@@ -140,25 +152,20 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   saveSession(session, sessionsDir);
 
   const runLoopFn = deps.runLoop ?? runLoopReal;
-  const gen = runLoopFn({
+  for await (const event of runLoopFn({
     model,
     tools: toolDefinitions,
-    messages: session.messages as ModelMessage[],
+    messages: session.messages,
     permissionMode: session.permissionMode,
     approvalPrompt: makeApprovalPrompt(),
-  });
-
-  let finalMessages = session.messages as ModelMessage[];
-  for (;;) {
-    const step = await gen.next();
-    if (step.done) {
-      finalMessages = step.value;
-      break;
+  })) {
+    if (event.type === "messages-updated") {
+      saveSession({ ...session, messages: event.messages }, sessionsDir);
+      continue;
     }
-    printEvent(step.value);
+    printEvent(event);
   }
 
-  saveSession({ ...session, messages: finalMessages }, sessionsDir);
   return 0;
 }
 

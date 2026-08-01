@@ -21,10 +21,15 @@ function textOnlyChunks(text: string): LanguageModelV4StreamPart[] {
   ];
 }
 
-function toolCallChunks(toolCallId: string, toolName: string, input: unknown): LanguageModelV4StreamPart[] {
+function toolCallChunks(
+  toolCallId: string,
+  toolName: string,
+  input: unknown,
+  tokenUsage = usage(5, 5),
+): LanguageModelV4StreamPart[] {
   return [
     { type: "tool-call", toolCallId, toolName, input: JSON.stringify(input) },
-    { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: usage(5, 5) },
+    { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: tokenUsage },
   ];
 }
 
@@ -117,6 +122,56 @@ describe("runLoop", () => {
 
     expect(model.doStreamCalls).toHaveLength(3);
     expect(events.at(-1)).toEqual({ type: "done", reason: "max-iterations" });
+  });
+
+  test("token-budget backstop trips once cumulative usage exceeds the configured budget", async () => {
+    const tools = makeTools(async () => "ok");
+    const model = new MockLanguageModelV4({
+      doStream: async () => streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" }, usage(60_000, 60_000))),
+    });
+    const events = await collect(
+      runLoop({ model, tools, messages: baseMessages, permissionMode: "auto", tokenBudget: 100_000 }),
+    );
+
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(events.at(-1)).toEqual({ type: "done", reason: "token-budget" });
+  });
+
+  test("yields messages-updated after appending the assistant message and after appending tool results", async () => {
+    const tools = makeTools(async () => "ok");
+    const model = new MockLanguageModelV4({
+      doStream: [
+        streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+        streamResult(textOnlyChunks("Done")),
+      ],
+    });
+    const events = await collect(
+      runLoop({ model, tools, messages: baseMessages, permissionMode: "auto" }),
+    );
+
+    const updates = events.filter(
+      (e): e is Extract<LoopEvent, { type: "messages-updated" }> => e.type === "messages-updated",
+    );
+    expect(updates).toHaveLength(2);
+    expect(updates[0]?.messages.at(-1)).toMatchObject({ role: "assistant" });
+    expect(updates[1]?.messages.at(-1)).toMatchObject({ role: "tool" });
+  });
+
+  test("yields an error and continues when the model calls a tool that doesn't exist, instead of crashing", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [
+        streamResult(toolCallChunks("call-1", "does_not_exist", { path: "a.txt" })),
+        streamResult(textOnlyChunks("Done")),
+      ],
+    });
+    const events = await collect(
+      runLoop({ model, tools: {}, messages: baseMessages, permissionMode: "auto" }),
+    );
+
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent?.error).toContain("does_not_exist");
+    expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
+    expect(model.doStreamCalls).toHaveLength(2);
   });
 
   describe("approve-each", () => {

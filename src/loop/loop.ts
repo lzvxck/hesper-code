@@ -7,6 +7,7 @@ export type LoopEvent =
   | { type: "tool-call"; name: string; args: unknown }
   | { type: "tool-result"; name: string; result: unknown }
   | { type: "permission-denied"; name: string }
+  | { type: "messages-updated"; messages: ModelMessage[] }
   | { type: "done"; reason: "no-tool-call" | "max-iterations" | "token-budget" }
   | { type: "error"; error: string };
 
@@ -23,7 +24,7 @@ export async function* runLoop(opts: {
   approvalPrompt?: ApprovalPrompt;
   maxIterations?: number;
   tokenBudget?: number;
-}): AsyncGenerator<LoopEvent, ModelMessage[]> {
+}): AsyncGenerator<LoopEvent> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const tokenBudget = opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
   const messages: ModelMessage[] = [...opts.messages];
@@ -53,18 +54,18 @@ export async function* runLoop(opts: {
           toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
         } else if (part.type === "error") {
           yield { type: "error", error: String(part.error) };
-          return messages;
+          return;
         }
       }
       totalTokens += (await result.usage).totalTokens ?? 0;
     } catch (err) {
       yield { type: "error", error: String(err) };
-      return messages;
+      return;
     }
 
     if (toolCalls.length === 0) {
       yield { type: "done", reason: "no-tool-call" };
-      return messages;
+      return;
     }
 
     const assistantContent: AssistantContent = [];
@@ -73,6 +74,7 @@ export async function* runLoop(opts: {
       assistantContent.push({ type: "tool-call", toolCallId: call.toolCallId, toolName: call.toolName, input: call.input });
     }
     messages.push({ role: "assistant", content: assistantContent });
+    yield { type: "messages-updated", messages: [...messages] };
 
     const toolResults: ToolContent = [];
     for (const call of toolCalls) {
@@ -93,8 +95,21 @@ export async function* runLoop(opts: {
         continue;
       }
 
+      const toolDef = opts.tools[call.toolName];
+      if (!toolDef?.execute) {
+        const error = `Unknown tool "${call.toolName}": no matching tool definition.`;
+        yield { type: "error", error };
+        toolResults.push({
+          type: "tool-result",
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: { type: "error-text", value: error },
+        });
+        continue;
+      }
+
       yield { type: "tool-call", name: call.toolName, args: call.input };
-      const toolResult = await opts.tools[call.toolName]!.execute!(call.input, {
+      const toolResult = await toolDef.execute(call.input, {
         toolCallId: call.toolCallId,
         messages,
         context: {},
@@ -108,13 +123,13 @@ export async function* runLoop(opts: {
       });
     }
     messages.push({ role: "tool", content: toolResults });
+    yield { type: "messages-updated", messages: [...messages] };
 
     if (totalTokens > tokenBudget) {
       yield { type: "done", reason: "token-budget" };
-      return messages;
+      return;
     }
   }
 
   yield { type: "done", reason: "max-iterations" };
-  return messages;
 }

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../package.json";
 import { run } from "./cli";
 import type { LoopEvent, runLoop } from "./loop/loop";
 import { toolDefinitions } from "./provider/tools";
+import { loadSession, saveSession, type SessionState } from "./session/session";
 
 describe("run", () => {
   test("--version prints the package.json version and returns 0", async () => {
@@ -99,5 +100,39 @@ describe("run (task invocation)", () => {
     expect(captured?.tools).toBe(toolDefinitions);
     expect(captured?.messages.at(-1)).toEqual({ role: "user", content: "write hello.txt" });
     expect(captured?.messages[0]).toEqual({ role: "system", content: "You are Vela, a coding agent." });
+  });
+});
+
+describe("run (/mode)", () => {
+  let sessionsDir: string;
+
+  beforeEach(() => {
+    sessionsDir = mkdtempSync(join(tmpdir(), "vela-cli-test-mode-sessions-"));
+  });
+
+  afterEach(() => {
+    rmSync(sessionsDir, { recursive: true, force: true });
+  });
+
+  test("`--resume /mode` cycles the most-recent session's mode instead of misparsing /mode as a session id", async () => {
+    const existing: SessionState = { id: "abc", cwd: ".", permissionMode: "read-only", messages: [] };
+    saveSession(existing, sessionsDir);
+
+    const code = await run(["--resume", "/mode"], { sessionsDir });
+
+    expect(code).toBe(0);
+    expect(readdirSync(sessionsDir)).toHaveLength(1);
+    expect(loadSession("abc", sessionsDir).permissionMode).toBe("approve-each");
+  });
+
+  test("bare `/mode` (no --resume) cycles the most-recent session instead of creating a new orphan session", async () => {
+    const existing: SessionState = { id: "def", cwd: ".", permissionMode: "read-only", messages: [] };
+    saveSession(existing, sessionsDir);
+
+    const code = await run(["/mode"], { sessionsDir });
+
+    expect(code).toBe(0);
+    expect(readdirSync(sessionsDir)).toHaveLength(1);
+    expect(loadSession("def", sessionsDir).permissionMode).toBe("approve-each");
   });
 });

@@ -1,6 +1,8 @@
+import { WRITE_TOOL_NAMES } from "../provider/tools";
+
 export type PermissionMode = "read-only" | "approve-each" | "auto";
 
-export const WRITE_TOOLS = new Set(["write_file", "edit", "bash", "powershell"]);
+export const WRITE_TOOLS = new Set<string>(WRITE_TOOL_NAMES);
 
 export function checkPermission(toolName: string, mode: PermissionMode): "allow" | "block" | "needs-approval" {
   if (mode === "auto") return "allow";

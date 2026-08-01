@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { join } from "node:path";
 import type { PermissionMode } from "../gate/gate";
 
-export type SessionState = {
+export type SessionState<TMessage = unknown> = {
   id: string;
   cwd: string;
   agentsFilePath?: string;
   permissionMode: PermissionMode;
-  messages: unknown[];
+  messages: TMessage[];
 };
 
 export function saveSession(state: SessionState, sessionsDir: string): void {
@@ -15,7 +15,7 @@ export function saveSession(state: SessionState, sessionsDir: string): void {
   writeFileSync(join(sessionsDir, `${state.id}.json`), JSON.stringify(state));
 }
 
-export function loadSession(id: string, sessionsDir: string): SessionState {
+export function loadSession<TMessage = unknown>(id: string, sessionsDir: string): SessionState<TMessage> {
   const path = join(sessionsDir, `${id}.json`);
   if (!existsSync(path)) throw new Error(`Session "${id}" not found in ${sessionsDir}`);
   return JSON.parse(readFileSync(path, "utf8"));

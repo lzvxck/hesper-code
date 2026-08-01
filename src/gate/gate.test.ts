@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { WRITE_TOOL_NAMES } from "../provider/tools";
 import { checkPermission, cycleMode, type PermissionMode, WRITE_TOOLS } from "./gate";
 
-const WRITE_TOOL_NAMES = [...WRITE_TOOLS];
 const READ_TOOL_NAMES = ["read_file", "grep", "glob"];
+
+test("WRITE_TOOLS matches provider/tools.ts's WRITE_TOOL_NAMES exactly", () => {
+  expect(WRITE_TOOLS).toEqual(new Set(WRITE_TOOL_NAMES));
+});
 
 describe("checkPermission", () => {
   describe("read-only", () => {

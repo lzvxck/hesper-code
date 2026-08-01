@@ -74,3 +74,8 @@ export const toolDefinitions = {
   bash: bashTool,
   powershell: powershellTool,
 };
+
+// Tools that write to disk or execute commands, as opposed to merely reading/searching.
+// gate.ts derives its permission set from this list so a new write-capable tool can't
+// silently drift out of sync with what read-only mode blocks.
+export const WRITE_TOOL_NAMES: (keyof typeof toolDefinitions)[] = ["write_file", "edit", "bash", "powershell"];
