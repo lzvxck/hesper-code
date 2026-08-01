@@ -62,6 +62,8 @@ describe("runLoop", () => {
       runLoop({ model, tools: {}, messages: baseMessages, permissionMode: "auto" }),
     );
     expect(events).toContainEqual({ type: "text-delta", text: "Hello" });
+    const update = events.find((e): e is Extract<LoopEvent, { type: "messages-updated" }> => e.type === "messages-updated");
+    expect(update?.messages.at(-1)).toEqual({ role: "assistant", content: [{ type: "text", text: "Hello" }] });
     expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
   });
 
@@ -152,9 +154,10 @@ describe("runLoop", () => {
     const updates = events.filter(
       (e): e is Extract<LoopEvent, { type: "messages-updated" }> => e.type === "messages-updated",
     );
-    expect(updates).toHaveLength(2);
+    expect(updates).toHaveLength(3);
     expect(updates[0]?.messages.at(-1)).toMatchObject({ role: "assistant" });
     expect(updates[1]?.messages.at(-1)).toMatchObject({ role: "tool" });
+    expect(updates[2]?.messages.at(-1)).toEqual({ role: "assistant", content: [{ type: "text", text: "Done" }] });
   });
 
   test("yields an error and continues when the model calls a tool that doesn't exist, instead of crashing", async () => {

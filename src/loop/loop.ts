@@ -64,6 +64,10 @@ export async function* runLoop(opts: {
     }
 
     if (toolCalls.length === 0) {
+      if (text) {
+        messages.push({ role: "assistant", content: [{ type: "text", text }] });
+        yield { type: "messages-updated", messages: [...messages] };
+      }
       yield { type: "done", reason: "no-tool-call" };
       return;
     }
