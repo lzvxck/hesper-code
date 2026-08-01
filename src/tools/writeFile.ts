@@ -48,7 +48,12 @@ function isRetryableError(err: unknown): boolean {
   return code === "EBUSY" || code === "EPERM";
 }
 
-export function writeFile(path: string, content: string, opts?: { eol?: "LF" | "CRLF" }): void {
+export function writeFile(
+  path: string,
+  content: string,
+  opts?: { eol?: "LF" | "CRLF" },
+  renameFn: typeof renameSync = renameSync,
+): void {
   if (process.platform === "win32" && isReservedName(path)) {
     throw new Error(`Cannot write to reserved device name: ${basename(path)}`);
   }
@@ -62,7 +67,7 @@ export function writeFile(path: string, content: string, opts?: { eol?: "LF" | "
 
   for (let attempt = 1; attempt <= MAX_RENAME_ATTEMPTS; attempt++) {
     try {
-      renameSync(tempPath, path);
+      renameFn(tempPath, path);
       return;
     } catch (err) {
       if (attempt === MAX_RENAME_ATTEMPTS || !isRetryableError(err)) {

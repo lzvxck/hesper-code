@@ -1,12 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import * as fs from "node:fs";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFile } from "./writeFile";
 
 const originalPlatform = process.platform;
-const originalFsExports = { ...fs };
 
 function setPlatform(platform: string): void {
   Object.defineProperty(process, "platform", { value: platform });
@@ -62,24 +60,17 @@ describe("writeFile", () => {
   test("retries on EBUSY then succeeds", () => {
     const filePath = join(tmpRoot, "locked.txt");
     let failuresLeft = 2;
-    mock.module("node:fs", () => ({
-      ...originalFsExports,
-      renameSync: (src: string, dest: string) => {
-        if (failuresLeft > 0) {
-          failuresLeft--;
-          const err = new Error("resource busy") as NodeJS.ErrnoException;
-          err.code = "EBUSY";
-          throw err;
-        }
-        return originalFsExports.renameSync(src, dest);
-      },
-    }));
+    const renameFn: typeof renameSync = (src, dest) => {
+      if (failuresLeft > 0) {
+        failuresLeft--;
+        const err = new Error("resource busy") as NodeJS.ErrnoException;
+        err.code = "EBUSY";
+        throw err;
+      }
+      return renameSync(src, dest);
+    };
 
-    try {
-      writeFile(filePath, "unlocked");
-    } finally {
-      mock.module("node:fs", () => originalFsExports);
-    }
+    writeFile(filePath, "unlocked", undefined, renameFn);
 
     expect(readFileSync(filePath, "utf8")).toBe("unlocked");
   });
