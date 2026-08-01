@@ -43,6 +43,22 @@ describe("writeFile", () => {
     expect(() => writeFile(filePath, "data")).toThrow();
   });
 
+  test("case collision: Foo.ts and foo.ts", () => {
+    const upperPath = join(tmpRoot, "Foo.ts");
+    const lowerPath = join(tmpRoot, "foo.ts");
+    writeFile(upperPath, "first");
+    writeFile(lowerPath, "second");
+
+    if (process.platform === "linux") {
+      expect(readFileSync(upperPath, "utf8")).toBe("first");
+      expect(readFileSync(lowerPath, "utf8")).toBe("second");
+    } else {
+      // win32/darwin have case-insensitive filesystems: writing foo.ts overwrites Foo.ts.
+      expect(readFileSync(upperPath, "utf8")).toBe("second");
+      expect(readFileSync(lowerPath, "utf8")).toBe("second");
+    }
+  });
+
   test("retries on EBUSY then succeeds", () => {
     const filePath = join(tmpRoot, "locked.txt");
     let failuresLeft = 2;

@@ -1,5 +1,4 @@
-import { spawnSync } from "node:child_process";
-import { rgPath } from "@vscode/ripgrep";
+import { runRipgrep } from "./runRipgrep";
 
 type RgMatchEvent = {
   type: "match";
@@ -11,13 +10,9 @@ export function grep(pattern: string, opts: { path: string; glob?: string }): { 
   if (opts.glob) args.push("-g", opts.glob);
   args.push(pattern, opts.path);
 
-  const result = spawnSync(rgPath, args, { encoding: "utf8" });
-  // rg exits 1 when there are no matches (not an error); anything else is a real failure.
-  if (result.status !== 0 && result.status !== 1) {
-    throw new Error(`rg exited with code ${result.status}: ${result.stderr}`);
-  }
+  const stdout = runRipgrep(args);
 
-  return result.stdout
+  return stdout
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { type: string })

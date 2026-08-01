@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import * as self from "./bash";
+import { type ProcessResult, spawnCollect } from "./spawnCollect";
 
 const WIN32_GIT_BASH_PATHS = ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files\\Git\\usr\\bin\\bash.exe"];
 
@@ -26,24 +25,10 @@ function resolveBashCommand(): string {
   return findOnPath("bash") ?? WIN32_GIT_BASH_PATHS.find(existsSync) ?? "bash";
 }
 
-export function runBash(command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  if (!self.isBashAvailable()) {
+export async function runBash(command: string, isAvailable: () => boolean = isBashAvailable): Promise<ProcessResult> {
+  if (!isAvailable()) {
     throw new Error("bash is not available on this system");
   }
 
-  return new Promise((resolve, reject) => {
-    const child = spawn(resolveBashCommand(), ["-c", command]);
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? 1 });
-    });
-  });
+  return spawnCollect(resolveBashCommand(), ["-c", command]);
 }
