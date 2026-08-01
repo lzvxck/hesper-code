@@ -19,7 +19,7 @@ describe("saveSession / loadSession", () => {
     const state: SessionState = {
       id: "abc123",
       cwd: "C:\\repo",
-      agentsFilePath: "C:\\repo\\AGENTS.md",
+      systemPrompt: "You are Vela, a coding agent.",
       permissionMode: "approve-each",
       messages: [
         { role: "user", content: "do the thing" },
@@ -35,7 +35,7 @@ describe("saveSession / loadSession", () => {
 
   test("creates sessionsDir if it doesn't exist yet", () => {
     const freshDir = join(sessionsDir, "nested", "sessions");
-    const state: SessionState = { id: "s1", cwd: ".", permissionMode: "auto", messages: [] };
+    const state: SessionState = { id: "s1", cwd: ".", systemPrompt: "", permissionMode: "auto", messages: [] };
 
     saveSession(state, freshDir);
 
@@ -49,9 +49,9 @@ describe("saveSession / loadSession", () => {
 
 describe("findMostRecentSession", () => {
   test("returns the id of the most recently modified session", () => {
-    saveSession({ id: "first", cwd: ".", permissionMode: "auto", messages: [] }, sessionsDir);
-    saveSession({ id: "second", cwd: ".", permissionMode: "auto", messages: [] }, sessionsDir);
-    saveSession({ id: "third", cwd: ".", permissionMode: "auto", messages: [] }, sessionsDir);
+    saveSession({ id: "first", cwd: ".", systemPrompt: "", permissionMode: "auto", messages: [] }, sessionsDir);
+    saveSession({ id: "second", cwd: ".", systemPrompt: "", permissionMode: "auto", messages: [] }, sessionsDir);
+    saveSession({ id: "third", cwd: ".", systemPrompt: "", permissionMode: "auto", messages: [] }, sessionsDir);
 
     // Explicit mtimes rather than relying on real-time gaps between writes, which can be
     // too small to distinguish on a fast filesystem.

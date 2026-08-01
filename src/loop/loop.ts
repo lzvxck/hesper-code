@@ -24,6 +24,7 @@ export async function* runLoop(opts: {
   approvalPrompt?: ApprovalPrompt;
   maxIterations?: number;
   tokenBudget?: number;
+  system?: string;
 }): AsyncGenerator<LoopEvent> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const tokenBudget = opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
@@ -45,7 +46,7 @@ export async function* runLoop(opts: {
     const toolCalls: { toolCallId: string; toolName: string; input: unknown }[] = [];
 
     try {
-      const result = streamText({ model: opts.model, tools: schemaOnlyTools, messages });
+      const result = streamText({ model: opts.model, tools: schemaOnlyTools, messages, system: opts.system });
       for await (const part of result.fullStream) {
         if (part.type === "text-delta") {
           text += part.text;

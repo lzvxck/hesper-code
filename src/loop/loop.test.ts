@@ -67,6 +67,15 @@ describe("runLoop", () => {
     expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
   });
 
+  test("passes the system option through to streamText", async () => {
+    const model = new MockLanguageModelV4({ doStream: async () => streamResult(textOnlyChunks("Hello")) });
+    await collect(
+      runLoop({ model, tools: {}, messages: baseMessages, permissionMode: "auto", system: "You are Vela, a coding agent." }),
+    );
+
+    expect(model.doStreamCalls[0]?.prompt[0]).toEqual({ role: "system", content: "You are Vela, a coding agent." });
+  });
+
   test("executes a tool call and appends the result to the next turn", async () => {
     const executed: unknown[] = [];
     const tools = makeTools(async (input) => {

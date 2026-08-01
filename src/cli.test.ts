@@ -99,7 +99,8 @@ describe("run (task invocation)", () => {
     expect(captured?.permissionMode).toBe("read-only");
     expect(captured?.tools).toBe(toolDefinitions);
     expect(captured?.messages.at(-1)).toEqual({ role: "user", content: "write hello.txt" });
-    expect(captured?.messages[0]).toEqual({ role: "system", content: "You are Vela, a coding agent." });
+    expect(captured?.messages).toHaveLength(1);
+    expect(captured?.system).toBe("You are Vela, a coding agent.");
   });
 });
 
@@ -115,7 +116,7 @@ describe("run (/mode)", () => {
   });
 
   test("`--resume /mode` cycles the most-recent session's mode instead of misparsing /mode as a session id", async () => {
-    const existing: SessionState = { id: "abc", cwd: ".", permissionMode: "read-only", messages: [] };
+    const existing: SessionState = { id: "abc", cwd: ".", systemPrompt: "", permissionMode: "read-only", messages: [] };
     saveSession(existing, sessionsDir);
 
     const code = await run(["--resume", "/mode"], { sessionsDir });
@@ -126,7 +127,7 @@ describe("run (/mode)", () => {
   });
 
   test("bare `/mode` (no --resume) cycles the most-recent session instead of creating a new orphan session", async () => {
-    const existing: SessionState = { id: "def", cwd: ".", permissionMode: "read-only", messages: [] };
+    const existing: SessionState = { id: "def", cwd: ".", systemPrompt: "", permissionMode: "read-only", messages: [] };
     saveSession(existing, sessionsDir);
 
     const code = await run(["/mode"], { sessionsDir });

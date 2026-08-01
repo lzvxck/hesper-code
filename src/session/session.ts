@@ -5,7 +5,7 @@ import type { PermissionMode } from "../gate/gate";
 export type SessionState<TMessage = unknown> = {
   id: string;
   cwd: string;
-  agentsFilePath?: string;
+  systemPrompt: string;
   permissionMode: PermissionMode;
   messages: TMessage[];
 };

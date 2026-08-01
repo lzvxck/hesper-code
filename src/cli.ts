@@ -47,19 +47,17 @@ function loadOrCreateSession(
   }
 
   const agentsContent = loadAgentsFileFn(process.cwd());
-  const systemMessage: ModelMessage = {
-    role: "system",
-    content: agentsContent ? `You are Vela, a coding agent.\n\n${agentsContent}` : "You are Vela, a coding agent.",
-  };
+  const systemPrompt = agentsContent ? `You are Vela, a coding agent.\n\n${agentsContent}` : "You are Vela, a coding agent.";
   return {
     id: randomUUID(),
     cwd: process.cwd(),
+    systemPrompt,
     // Read-only is the safest default for a brand-new session: nothing in build-plan.md/
     // definitive-harness.md states an explicit default, so this errs on the side of never
     // writing/executing without the user opting in via --resume onto an existing session
     // or cycling the mode themselves.
     permissionMode: "read-only",
-    messages: [systemMessage],
+    messages: [],
   };
 }
 
@@ -158,6 +156,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
     messages: session.messages,
     permissionMode: session.permissionMode,
     approvalPrompt: makeApprovalPrompt(),
+    system: session.systemPrompt,
   })) {
     if (event.type === "messages-updated") {
       saveSession({ ...session, messages: event.messages }, sessionsDir);
