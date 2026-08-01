@@ -207,6 +207,37 @@ describe("runLoop", () => {
     expect(model.doStreamCalls).toHaveLength(2);
   });
 
+  test("yields an error and continues when a tool's execute throws, instead of crashing", async () => {
+    const tools = makeTools(async () => {
+      throw new Error("disk full");
+    });
+    const model = new MockLanguageModelV4({
+      doStream: [
+        streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+        streamResult(textOnlyChunks("Done")),
+      ],
+    });
+    const events = await collect(
+      runLoop({ model, tools, messages: baseMessages, permissionMode: "auto" }),
+    );
+
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent?.error).toContain("write_file");
+    expect(errorEvent?.error).toContain("disk full");
+
+    const update = events.find(
+      (e): e is Extract<LoopEvent, { type: "messages-updated" }> =>
+        e.type === "messages-updated" && e.messages.at(-1)?.role === "tool",
+    );
+    const toolMessage = update?.messages.at(-1);
+    expect(toolMessage?.content).toContainEqual(
+      expect.objectContaining({ type: "tool-result", toolCallId: "call-1" }),
+    );
+
+    expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
+    expect(model.doStreamCalls).toHaveLength(2);
+  });
+
   describe("approve-each", () => {
     test("executes the tool when the approval prompt approves", async () => {
       const executed: unknown[] = [];

@@ -114,11 +114,24 @@ export async function* runLoop(opts: {
       }
 
       yield { type: "tool-call", name: call.toolName, args: call.input };
-      const toolResult = await toolDef.execute(call.input, {
-        toolCallId: call.toolCallId,
-        messages,
-        context: {},
-      });
+      let toolResult: unknown;
+      try {
+        toolResult = await toolDef.execute(call.input, {
+          toolCallId: call.toolCallId,
+          messages,
+          context: {},
+        });
+      } catch (err) {
+        const error = `Tool "${call.toolName}" threw during execution: ${String(err)}`;
+        yield { type: "error", error };
+        toolResults.push({
+          type: "tool-result",
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: { type: "error-text", value: error },
+        });
+        continue;
+      }
       yield { type: "tool-result", name: call.toolName, result: toolResult };
       toolResults.push({
         type: "tool-result",
