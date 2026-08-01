@@ -5,6 +5,7 @@
     "module": "ES2022",
     "moduleResolution": "bundler",
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "types": ["bun-types"]
   },
   "include": ["src"]

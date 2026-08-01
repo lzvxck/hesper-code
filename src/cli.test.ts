@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { run } from "./cli";
-
-const pkg = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as {
-  version: string;
-};
+import pkg from "../package.json";
 
 describe("run", () => {
   test("--version prints the package.json version and returns 0", () => {

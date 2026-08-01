@@ -5,7 +5,12 @@ import { getConfigDir } from "./paths";
 export function loadConfig(): Record<string, string> {
   const configPath = join(getConfigDir(), "config.json");
   if (!existsSync(configPath)) return {};
-  return JSON.parse(readFileSync(configPath, "utf8")) as Record<string, string>;
+  const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === "string") result[key] = value;
+  }
+  return result;
 }
 
 export function getApiKey(name: string): string | undefined {

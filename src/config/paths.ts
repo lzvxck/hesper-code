@@ -7,5 +7,5 @@ export function getConfigDir(): string {
     if (!localAppData) throw new Error("LOCALAPPDATA environment variable is not set");
     return join(localAppData, "vela");
   }
-  return join(homedir(), ".vela");
+  return join(process.env.HOME || homedir(), ".vela");
 }
