@@ -7,7 +7,7 @@ import { findMostRecentSession, loadSession, saveSession, type SessionState } fr
 let sessionsDir: string;
 
 beforeEach(() => {
-  sessionsDir = mkdtempSync(join(tmpdir(), "vela-session-test-"));
+  sessionsDir = mkdtempSync(join(tmpdir(), "hesper-session-test-"));
 });
 
 afterEach(() => {
@@ -19,7 +19,7 @@ describe("saveSession / loadSession", () => {
     const state: SessionState = {
       id: "abc123",
       cwd: "C:\\repo",
-      systemPrompt: "You are Vela, a coding agent.",
+      systemPrompt: "You are Hesper, a coding agent.",
       permissionMode: "approve-each",
       messages: [
         { role: "user", content: "do the thing" },

@@ -18,7 +18,7 @@ describe("run", () => {
 
     console.log = originalLog;
     expect(code).toBe(0);
-    expect(logs).toEqual([`vela ${pkg.version}`]);
+    expect(logs).toEqual([`hesper ${pkg.version}`]);
   });
 });
 
@@ -35,10 +35,10 @@ describe("run (task invocation)", () => {
   }
 
   beforeEach(() => {
-    sessionsDir = mkdtempSync(join(tmpdir(), "vela-cli-test-sessions-"));
+    sessionsDir = mkdtempSync(join(tmpdir(), "hesper-cli-test-sessions-"));
     // Redirect the config dir to an empty temp dir so a real config.json on this machine
     // can never supply GROQ_API_KEY and mask the "unset" case (same guard as groq.test.ts).
-    tmpConfigRoot = mkdtempSync(join(tmpdir(), "vela-cli-test-config-"));
+    tmpConfigRoot = mkdtempSync(join(tmpdir(), "hesper-cli-test-config-"));
     if (process.platform === "win32") process.env.LOCALAPPDATA = tmpConfigRoot;
     else process.env.HOME = tmpConfigRoot;
   });
@@ -100,7 +100,7 @@ describe("run (task invocation)", () => {
     expect(captured?.tools).toBe(toolDefinitions);
     expect(captured?.messages.at(-1)).toEqual({ role: "user", content: "write hello.txt" });
     expect(captured?.messages).toHaveLength(1);
-    expect(captured?.system).toBe("You are Vela, a coding agent.");
+    expect(captured?.system).toBe("You are Hesper, a coding agent.");
   });
 });
 
@@ -108,7 +108,7 @@ describe("run (/mode)", () => {
   let sessionsDir: string;
 
   beforeEach(() => {
-    sessionsDir = mkdtempSync(join(tmpdir(), "vela-cli-test-mode-sessions-"));
+    sessionsDir = mkdtempSync(join(tmpdir(), "hesper-cli-test-mode-sessions-"));
   });
 
   afterEach(() => {

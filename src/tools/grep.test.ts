@@ -7,7 +7,7 @@ import { grep } from "./grep";
 let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "vela-grep-test-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "hesper-grep-test-"));
   writeFileSync(join(tmpDir, "a.txt"), "hello world\nfoo bar\nhello again\n");
 });
 

@@ -7,7 +7,7 @@ import { readFile } from "./readFile";
 let tmpRoot: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "vela-readFile-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "hesper-readFile-test-"));
 });
 
 afterEach(() => {

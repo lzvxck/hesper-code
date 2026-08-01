@@ -7,7 +7,7 @@ import { glob } from "./glob";
 let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "vela-glob-test-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "hesper-glob-test-"));
   writeFileSync(join(tmpDir, "a.txt"), "a");
   writeFileSync(join(tmpDir, "b.txt"), "b");
   writeFileSync(join(tmpDir, "c.js"), "c");

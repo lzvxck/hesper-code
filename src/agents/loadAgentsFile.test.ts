@@ -7,7 +7,7 @@ import { findAgentsFile, loadAgentsFile } from "./loadAgentsFile";
 let tmpRoot: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "vela-loadAgentsFile-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "hesper-loadAgentsFile-test-"));
 });
 
 afterEach(() => {

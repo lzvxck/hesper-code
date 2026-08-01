@@ -17,7 +17,7 @@ function restoreEnv(key: string, original: string | undefined): void {
 }
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "vela-config-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "hesper-config-test-"));
   if (process.platform === "win32") process.env.LOCALAPPDATA = tmpRoot;
   else process.env.HOME = tmpRoot;
   configDir = getConfigDir();
@@ -37,7 +37,7 @@ describe("loadConfig", () => {
 });
 
 describe("getApiKey", () => {
-  const KEY = "VELA_TEST_API_KEY";
+  const KEY = "HESPER_TEST_API_KEY";
 
   afterEach(() => {
     delete process.env[KEY];

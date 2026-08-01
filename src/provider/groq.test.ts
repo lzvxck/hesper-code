@@ -19,7 +19,7 @@ beforeEach(() => {
   delete process.env.GROQ_API_KEY;
   // Point the config dir at an empty temp dir so a real config.json on this
   // machine can never supply GROQ_API_KEY and mask the "unset" case.
-  tmpRoot = mkdtempSync(join(tmpdir(), "vela-groq-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "hesper-groq-test-"));
   if (process.platform === "win32") process.env.LOCALAPPDATA = tmpRoot;
   else process.env.HOME = tmpRoot;
 });

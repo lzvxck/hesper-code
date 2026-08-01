@@ -47,7 +47,7 @@ function loadOrCreateSession(
   }
 
   const agentsContent = loadAgentsFileFn(process.cwd());
-  const systemPrompt = agentsContent ? `You are Vela, a coding agent.\n\n${agentsContent}` : "You are Vela, a coding agent.";
+  const systemPrompt = agentsContent ? `You are Hesper, a coding agent.\n\n${agentsContent}` : "You are Hesper, a coding agent.";
   return {
     id: randomUUID(),
     cwd: process.cwd(),
@@ -99,7 +99,7 @@ function printEvent(event: LoopEvent): void {
 
 export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   if (argv.length === 0 || argv.includes("--version") || argv.includes("-v")) {
-    if (argv.includes("--version") || argv.includes("-v")) console.log(`vela ${pkg.version}`);
+    if (argv.includes("--version") || argv.includes("-v")) console.log(`hesper ${pkg.version}`);
     return 0;
   }
 
