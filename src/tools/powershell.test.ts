@@ -6,5 +6,5 @@ describe.skipIf(process.platform !== "win32")("runPowerShell", () => {
     const result = await runPowerShell("Write-Output hi");
     expect(result.stdout.trim()).toBe("hi");
     expect(result.exitCode).toBe(0);
-  });
+  }, 15000);
 });

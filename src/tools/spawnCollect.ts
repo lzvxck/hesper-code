@@ -4,7 +4,7 @@ export type ProcessResult = { stdout: string; stderr: string; exitCode: number }
 
 export function spawnCollect(executable: string, args: string[]): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args);
+    const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
