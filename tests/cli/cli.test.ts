@@ -104,6 +104,81 @@ describe("run (task invocation)", () => {
   });
 });
 
+describe("run (login/signup/logout)", () => {
+  const failIfCalled = (name: string) => () => {
+    throw new Error(`${name} should not be called`);
+  };
+
+  test("`hesper login` calls deps.login with mode 'login' and never touches the model/loop/session code", async () => {
+    let captured: [string, string, string] | undefined;
+    const code = await run(["login"], {
+      login: async (mode, clientId, configDir) => {
+        captured = [mode, clientId, configDir];
+      },
+      authConfigDir: "fake-config-dir",
+      getGroqModel: failIfCalled("getGroqModel"),
+      loadAgentsFile: failIfCalled("loadAgentsFile"),
+    });
+
+    expect(code).toBe(0);
+    expect(captured?.[0]).toBe("login");
+    expect(captured?.[2]).toBe("fake-config-dir");
+  });
+
+  test("`hesper signup` calls deps.login with mode 'signup'", async () => {
+    let capturedMode: string | undefined;
+    const code = await run(["signup"], {
+      login: async (mode) => {
+        capturedMode = mode;
+      },
+      authConfigDir: "fake-config-dir",
+      getGroqModel: failIfCalled("getGroqModel"),
+      loadAgentsFile: failIfCalled("loadAgentsFile"),
+    });
+
+    expect(code).toBe(0);
+    expect(capturedMode).toBe("signup");
+  });
+
+  test("deps.login throwing returns a non-zero exit code instead of an unhandled rejection", async () => {
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (msg: string) => errors.push(String(msg));
+
+    let code: number;
+    try {
+      code = await run(["login"], {
+        login: async () => {
+          throw new Error("device code request failed: 429");
+        },
+        authConfigDir: "fake-config-dir",
+        getGroqModel: failIfCalled("getGroqModel"),
+        loadAgentsFile: failIfCalled("loadAgentsFile"),
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(code).not.toBe(0);
+    expect(errors).toEqual(["device code request failed: 429"]);
+  });
+
+  test("`hesper logout` calls deps.logout and never touches the model/loop/session code", async () => {
+    let capturedConfigDir: string | undefined;
+    const code = await run(["logout"], {
+      logout: (configDir) => {
+        capturedConfigDir = configDir;
+      },
+      authConfigDir: "fake-config-dir",
+      getGroqModel: failIfCalled("getGroqModel"),
+      loadAgentsFile: failIfCalled("loadAgentsFile"),
+    });
+
+    expect(code).toBe(0);
+    expect(capturedConfigDir).toBe("fake-config-dir");
+  });
+});
+
 describe("run (/mode)", () => {
   let sessionsDir: string;
 
