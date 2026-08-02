@@ -238,6 +238,63 @@ describe("runLoop", () => {
     expect(model.doStreamCalls).toHaveLength(2);
   });
 
+  test("compacts history once lastInputTokens crosses the threshold across a ~25-turn run, and a pre-compaction fact survives via the summary", async () => {
+    const marker = "MARKER_FACT_777";
+    const tools = makeTools(async (input: { path: string }) => (input.path === "marker.txt" ? marker : "ok"));
+
+    const summaryObj = {
+      goal: "keep working on the task",
+      progress: `earlier the agent found: ${marker}`,
+      blockers: "none",
+      nextSteps: "continue",
+    };
+
+    const totalIterations = 25;
+    const compactAtIteration = 11; // the doStream call whose usage crosses the threshold
+    const doStream = Array.from({ length: totalIterations }, (_, i) => {
+      const inputTokens = i === compactAtIteration ? 6000 : 100;
+      const path = i === 0 ? "marker.txt" : "a.txt";
+      return streamResult(toolCallChunks(`call-${i}`, "write_file", { path }, usage(inputTokens, 10)));
+    });
+
+    const model = new MockLanguageModelV4({
+      doStream,
+      doGenerate: async () => ({
+        content: [{ type: "text", text: JSON.stringify(summaryObj) }],
+        finishReason: { unified: "stop", raw: undefined },
+        usage: usage(20, 10),
+        warnings: [],
+      }),
+    });
+
+    const events = await collect(
+      runLoop({
+        model,
+        tools,
+        messages: baseMessages,
+        permissionMode: "auto",
+        maxIterations: totalIterations,
+        contextWindowSize: 10_000,
+        compactionThreshold: 0.5,
+        preserveRecentMessages: 6,
+      }),
+    );
+
+    const compactedEvents = events.filter((e): e is Extract<LoopEvent, { type: "compacted" }> => e.type === "compacted");
+    expect(compactedEvents).toHaveLength(1);
+    expect(compactedEvents[0]?.evictedCount).toBeGreaterThan(0);
+    expect(model.doGenerateCalls).toHaveLength(1);
+
+    expect(model.doStreamCalls).toHaveLength(totalIterations);
+    const compactedAtCallIndex = compactAtIteration + 1; // compaction runs before this iteration's streamText call
+    const beforePromptSize = model.doStreamCalls[compactAtIteration]?.prompt.length ?? 0;
+    const afterPromptSize = model.doStreamCalls[compactedAtCallIndex]?.prompt.length ?? 0;
+    expect(afterPromptSize).toBeLessThan(beforePromptSize);
+
+    const finalPrompt = model.doStreamCalls.at(-1)?.prompt;
+    expect(JSON.stringify(finalPrompt)).toContain(marker);
+  });
+
   describe("approve-each", () => {
     test("executes the tool when the approval prompt approves", async () => {
       const executed: unknown[] = [];
