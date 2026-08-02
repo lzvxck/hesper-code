@@ -14,8 +14,8 @@ function authPath(configDir: string): string {
 }
 
 export function saveAuthSession(session: AuthSession, configDir: string): void {
-  mkdirSync(configDir, { recursive: true });
-  writeFileSync(authPath(configDir), JSON.stringify(session));
+  mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  writeFileSync(authPath(configDir), JSON.stringify(session), { mode: 0o600 });
 }
 
 export function loadAuthSession(configDir: string): AuthSession | undefined {
