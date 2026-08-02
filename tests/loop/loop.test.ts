@@ -295,6 +295,45 @@ describe("runLoop", () => {
     expect(JSON.stringify(finalPrompt)).toContain(marker);
   });
 
+  test("yields an error and keeps running uncompacted when compactMessages throws", async () => {
+    const marker = "MARKER_FACT_777";
+    const tools = makeTools(async (input: { path: string }) => (input.path === "marker.txt" ? marker : "ok"));
+
+    const totalIterations = 25;
+    const compactAtIteration = 11; // the doStream call whose usage crosses the threshold
+    const doStream = Array.from({ length: totalIterations }, (_, i) => {
+      const inputTokens = i === compactAtIteration ? 6000 : 100;
+      const path = i === 0 ? "marker.txt" : "a.txt";
+      return streamResult(toolCallChunks(`call-${i}`, "write_file", { path }, usage(inputTokens, 10)));
+    });
+
+    const model = new MockLanguageModelV4({
+      doStream,
+      doGenerate: async () => {
+        throw new Error("summary generation failed");
+      },
+    });
+
+    const events = await collect(
+      runLoop({
+        model,
+        tools,
+        messages: baseMessages,
+        permissionMode: "auto",
+        maxIterations: totalIterations,
+        contextWindowSize: 10_000,
+        compactionThreshold: 0.5,
+        preserveRecentMessages: 6,
+      }),
+    );
+
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent?.error).toContain("summary generation failed");
+    expect(events.find((e) => e.type === "compacted")).toBeUndefined();
+    expect(events.at(-1)).toEqual({ type: "done", reason: "max-iterations" });
+    expect(model.doStreamCalls).toHaveLength(totalIterations);
+  });
+
   describe("approve-each", () => {
     test("executes the tool when the approval prompt approves", async () => {
       const executed: unknown[] = [];
