@@ -20,13 +20,22 @@ export type TokenResult =
   | { status: "expired" }
   | { status: "error"; message: string };
 
+async function parseResponseBody(response: Response): Promise<any> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 200) };
+  }
+}
+
 export async function requestDeviceCode(clientId: string, fetchFn: typeof fetch = fetch): Promise<DeviceAuthorization> {
   const response = await fetchFn(AUTHORIZE_DEVICE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: clientId }),
   });
-  const body = await response.json();
+  const body = await parseResponseBody(response);
   if (!response.ok) {
     throw new Error(`WorkOS device authorization failed with status ${response.status}: ${JSON.stringify(body)}`);
   }
@@ -70,7 +79,7 @@ export async function pollForToken(
         client_id: clientId,
       }).toString(),
     });
-    const body = await response.json();
+    const body = await parseResponseBody(response);
 
     if (response.ok) {
       return {

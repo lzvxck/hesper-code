@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { type DeviceAuthorization, pollForToken, requestDeviceCode } from "../../src/auth/deviceFlow";
 
 function fakeResponse(ok: boolean, body: unknown): Response {
-  return { ok, json: async () => body } as Response;
+  return { ok, text: async () => JSON.stringify(body) } as Response;
+}
+
+function fakeTextResponse(ok: boolean, status: number, text: string): Response {
+  return { ok, status, text: async () => text } as Response;
 }
 
 describe("requestDeviceCode", () => {
@@ -38,9 +42,17 @@ describe("requestDeviceCode", () => {
 
   test("throws when the response is not ok instead of returning undefined fields", async () => {
     const fetchFn = async () =>
-      ({ ok: false, status: 429, json: async () => ({ error: "rate_limited" }) }) as Response;
+      ({ ok: false, status: 429, text: async () => JSON.stringify({ error: "rate_limited" }) }) as Response;
 
     await expect(requestDeviceCode("client_123", fetchFn as unknown as typeof fetch)).rejects.toThrow();
+  });
+
+  test("throws a clean error instead of an unhandled SyntaxError when the error body isn't valid JSON", async () => {
+    const fetchFn = async () => fakeTextResponse(false, 502, "<html>502 Bad Gateway</html>");
+
+    await expect(requestDeviceCode("client_123", fetchFn as unknown as typeof fetch)).rejects.toThrow(
+      /WorkOS device authorization failed with status 502/,
+    );
   });
 });
 
