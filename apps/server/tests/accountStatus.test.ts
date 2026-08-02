@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type SubscriptionStatus, upsertAccountStatus } from "../lib/accountStatus";
 
-function fakeSupabase() {
+function fakeSupabase(error: unknown = null) {
   const calls: { table: string; row: unknown; opts: unknown }[] = [];
   const client = {
     from: (table: string) => ({
       upsert: (row: unknown, opts: unknown) => {
         calls.push({ table, row, opts });
-        return Promise.resolve({ data: null, error: null });
+        return Promise.resolve({ data: null, error });
       },
     }),
   };
@@ -53,5 +53,19 @@ describe("upsertAccountStatus", () => {
 
     const row = calls[0]?.row as Record<string, unknown>;
     expect(row.email).toBeNull();
+  });
+
+  test("throws when Supabase returns an error", async () => {
+    const supabaseError = new Error("write failed");
+    const { client } = fakeSupabase(supabaseError);
+
+    await expect(
+      upsertAccountStatus(client, {
+        workosUserId: "user_3",
+        email: null,
+        polarCustomerId: "cus_3",
+        status: "active",
+      }),
+    ).rejects.toThrow(supabaseError);
   });
 });

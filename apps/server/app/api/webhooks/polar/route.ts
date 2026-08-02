@@ -23,13 +23,26 @@ export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | 
   }
 }
 
-function upsertFromCustomer(customer: SubscriptionCustomer, status: SubscriptionStatus): Promise<void> {
-  return upsertAccountStatus(getSupabaseClient(), {
-    workosUserId: customer.externalId ?? "",
+export function toAccountStatusParams(
+  customer: SubscriptionCustomer,
+  status: SubscriptionStatus,
+): { workosUserId: string; email: string | null; polarCustomerId: string; status: SubscriptionStatus } | null {
+  if (!customer.externalId) return null;
+  return {
+    workosUserId: customer.externalId,
     email: customer.email ?? null,
     polarCustomerId: customer.id,
     status,
-  });
+  };
+}
+
+function upsertFromCustomer(customer: SubscriptionCustomer, status: SubscriptionStatus): Promise<void> {
+  const params = toAccountStatusParams(customer, status);
+  if (!params) {
+    console.warn(`Polar webhook: customer ${customer.id} has no externalId, skipping upsert`);
+    return Promise.resolve();
+  }
+  return upsertAccountStatus(getSupabaseClient(), params);
 }
 
 function syncSubscription(
