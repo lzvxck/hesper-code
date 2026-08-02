@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getGroqModel } from "./groq";
+import { getGroqModel } from "../../src/provider/groq";
 
 const originalKey = process.env.GROQ_API_KEY;
 const originalLocalAppData = process.env.LOCALAPPDATA;

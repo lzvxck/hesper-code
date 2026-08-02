@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { edit } from "./edit";
+import { edit } from "../../src/tools/edit";
 
 describe("edit", () => {
   test("tier 0 (exact match) succeeds directly", () => {

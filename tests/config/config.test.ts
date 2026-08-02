@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getConfigDir } from "./paths";
-import { getApiKey, loadConfig } from "./config";
+import { getConfigDir } from "../../src/config/paths";
+import { getApiKey, loadConfig } from "../../src/config/config";
 
 const originalLocalAppData = process.env.LOCALAPPDATA;
 const originalHome = process.env.HOME;

@@ -3,7 +3,7 @@ import { simulateReadableStream, tool, type ModelMessage, type ToolSet } from "a
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
-import { runLoop, type LoopEvent } from "./loop";
+import { runLoop, type LoopEvent } from "../../src/loop/loop";
 
 function usage(inputTotal: number, outputTotal: number) {
   return {

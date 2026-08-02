@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getConfigDir } from "./paths";
+import { getConfigDir } from "../../src/config/paths";
 
 const originalPlatform = process.platform;
 const originalLocalAppData = process.env.LOCALAPPDATA;

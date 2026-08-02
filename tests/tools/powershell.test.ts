@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runPowerShell } from "./powershell";
+import { runPowerShell } from "../../src/tools/powershell";
 
 describe.skipIf(process.platform !== "win32")("runPowerShell", () => {
   test("runs a trivial command", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { WRITE_TOOL_NAMES } from "../provider/tools";
-import { checkPermission, cycleMode, type PermissionMode, WRITE_TOOLS } from "./gate";
+import { WRITE_TOOL_NAMES } from "../../src/provider/tools";
+import { checkPermission, cycleMode, type PermissionMode, WRITE_TOOLS } from "../../src/gate/gate";
 
 const READ_TOOL_NAMES = ["read_file", "grep", "glob"];
 

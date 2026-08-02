@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import pkg from "../package.json";
-import { run } from "./cli";
-import type { LoopEvent, runLoop } from "./loop/loop";
-import { toolDefinitions } from "./provider/tools";
-import { loadSession, saveSession, type SessionState } from "./session/session";
+import pkg from "../../package.json";
+import { run } from "../../src/cli";
+import type { LoopEvent, runLoop } from "../../src/loop/loop";
+import { toolDefinitions } from "../../src/provider/tools";
+import { loadSession, saveSession, type SessionState } from "../../src/session/session";
 
 describe("run", () => {
   test("--version prints the package.json version and returns 0", async () => {

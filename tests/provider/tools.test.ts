@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolExecutionOptions } from "ai";
-import { toolDefinitions } from "./tools";
+import { toolDefinitions } from "../../src/provider/tools";
 
 // Minimal stub satisfying the AI SDK's execute() options param; unused by our adapters.
 const execOpts: ToolExecutionOptions<Record<string, unknown>> = { toolCallId: "test-call", messages: [], context: {} };

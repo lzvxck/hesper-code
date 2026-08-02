@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFile } from "./writeFile";
+import { writeFile } from "../../src/tools/writeFile";
 
 const originalPlatform = process.platform;
 

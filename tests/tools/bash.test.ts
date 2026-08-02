@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runBash } from "./bash";
+import { runBash } from "../../src/tools/bash";
 
 describe("runBash", () => {
   test("runs a trivial command", async () => {

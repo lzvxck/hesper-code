@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findMostRecentSession, loadSession, saveSession, type SessionState } from "./session";
+import { findMostRecentSession, loadSession, saveSession, type SessionState } from "../../src/session/session";
 
 let sessionsDir: string;
 
