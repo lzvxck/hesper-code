@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { SubscriptionCustomer } from "@polar-sh/sdk/models/components/subscriptioncustomer";
-import { toAccountStatusParams, toSubscriptionStatus } from "../app/api/webhooks/polar/route";
+import type { WebhookSubscriptionCanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptioncanceledpayload";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { onSubscriptionCanceled, toAccountStatusParams, toSubscriptionStatus } from "../app/api/webhooks/polar/route";
 
 describe("toSubscriptionStatus", () => {
   test.each([
@@ -42,5 +44,32 @@ describe("toAccountStatusParams", () => {
 
   test("returns null when externalId is undefined", () => {
     expect(toAccountStatusParams(fakeCustomer({ externalId: undefined }), "active")).toBeNull();
+  });
+});
+
+function fakeSupabase() {
+  const calls: { row: Record<string, unknown> }[] = [];
+  const client = {
+    from: () => ({
+      upsert: (row: Record<string, unknown>) => {
+        calls.push({ row });
+        return Promise.resolve({ data: null, error: null });
+      },
+    }),
+  };
+  return { client: client as unknown as SupabaseClient, calls };
+}
+
+describe("onSubscriptionCanceled", () => {
+  test("upserts status 'canceled' even though payload.data.status is still 'active'", async () => {
+    const { client, calls } = fakeSupabase();
+    const payload = {
+      data: { status: "active", customer: fakeCustomer({}) },
+    } as unknown as WebhookSubscriptionCanceledPayload;
+
+    await onSubscriptionCanceled(payload, client);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.row.subscription_status).toBe("canceled");
   });
 });

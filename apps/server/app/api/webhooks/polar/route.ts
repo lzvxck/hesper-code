@@ -6,6 +6,7 @@ import type { WebhookSubscriptionCreatedPayload } from "@polar-sh/sdk/models/com
 import type { WebhookSubscriptionRevokedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionrevokedpayload";
 import type { WebhookSubscriptionUncanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionuncanceledpayload";
 import type { WebhookSubscriptionUpdatedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionupdatedpayload";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "../../../../lib/supabase";
 import {
   type AccountStatusUpsertParams,
@@ -40,20 +41,23 @@ export function toAccountStatusParams(
   };
 }
 
-function upsertFromCustomer(customer: SubscriptionCustomer, status: SubscriptionStatus): Promise<void> {
+function upsertFromCustomer(
+  customer: SubscriptionCustomer,
+  status: SubscriptionStatus,
+  supabase: SupabaseClient = getSupabaseClient(),
+): Promise<void> {
   const params = toAccountStatusParams(customer, status);
   if (!params) {
     console.warn(`Polar webhook: customer ${customer.id} has no externalId, skipping upsert`);
     return Promise.resolve();
   }
-  return upsertAccountStatus(getSupabaseClient(), params);
+  return upsertAccountStatus(supabase, params);
 }
 
 function syncSubscription(
   payload:
     | WebhookSubscriptionCreatedPayload
     | WebhookSubscriptionActivePayload
-    | WebhookSubscriptionCanceledPayload
     | WebhookSubscriptionUncanceledPayload
     | WebhookSubscriptionUpdatedPayload,
 ): Promise<void> {
@@ -65,11 +69,21 @@ function syncSubscription(
   return upsertFromCustomer(payload.data.customer, status);
 }
 
+// Polar keeps `data.status` as "active" while a cancellation is only scheduled
+// (subscription stays active until the current period ends), so this must not
+// derive status from payload.data.status like syncSubscription does.
+export function onSubscriptionCanceled(
+  payload: WebhookSubscriptionCanceledPayload,
+  supabase?: SupabaseClient,
+): Promise<void> {
+  return upsertFromCustomer(payload.data.customer, "canceled", supabase);
+}
+
 export const POST = Webhooks({
   webhookSecret: process.env.POLAR_WEBHOOK_SECRET!,
   onSubscriptionCreated: syncSubscription,
   onSubscriptionActive: syncSubscription,
-  onSubscriptionCanceled: syncSubscription,
+  onSubscriptionCanceled,
   onSubscriptionUncanceled: syncSubscription,
   onSubscriptionUpdated: syncSubscription,
   onSubscriptionRevoked: (payload: WebhookSubscriptionRevokedPayload) =>
