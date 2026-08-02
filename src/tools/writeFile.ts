@@ -62,8 +62,11 @@ export function writeFile(
   const lf = content.replace(/\r\n/g, "\n");
   const finalContent = eol === "CRLF" ? lf.replace(/\n/g, "\r\n") : lf;
 
-  const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  const tempPath = join(dir, `.${basename(path)}.${process.pid}.tmp`);
+  // dirname("somefile.txt") is ".", the cwd — it always exists, and Bun's mkdirSync
+  // throws EEXIST for it on Windows (unlike Node, which no-ops), so skip the call entirely.
+  if (dir !== ".") mkdirSync(dir, { recursive: true });
   writeFileSync(tempPath, finalContent, "utf8");
 
   for (let attempt = 1; attempt <= MAX_RENAME_ATTEMPTS; attempt++) {

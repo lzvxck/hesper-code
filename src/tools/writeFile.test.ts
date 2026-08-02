@@ -63,6 +63,17 @@ describe("writeFile", () => {
     expect(readFileSync(filePath, "utf8")).toBe("hello nested");
   });
 
+  test("writes a bare filename with no directory component (cwd-relative)", () => {
+    const originalCwd = process.cwd();
+    process.chdir(tmpRoot);
+    try {
+      expect(() => writeFile("out.txt", "hello cwd")).not.toThrow();
+      expect(readFileSync(join(tmpRoot, "out.txt"), "utf8")).toBe("hello cwd");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   test("retries on EBUSY then succeeds", () => {
     const filePath = join(tmpRoot, "locked.txt");
     let failuresLeft = 2;
