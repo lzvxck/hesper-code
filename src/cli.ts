@@ -113,12 +113,22 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 
   if (argv[0] === "login" || argv[0] === "signup") {
     const loginFn = deps.login ?? loginReal;
-    await loginFn(argv[0], DEFAULT_WORKOS_CLIENT_ID, deps.authConfigDir ?? getConfigDir());
+    try {
+      await loginFn(argv[0], DEFAULT_WORKOS_CLIENT_ID, deps.authConfigDir ?? getConfigDir());
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
     return 0;
   }
   if (argv[0] === "logout") {
     const logoutFn = deps.logout ?? logoutReal;
-    logoutFn(deps.authConfigDir ?? getConfigDir());
+    try {
+      logoutFn(deps.authConfigDir ?? getConfigDir());
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
     return 0;
   }
 
