@@ -17,9 +17,10 @@ export type ApprovalPrompt = (toolName: string, args: unknown) => Promise<boolea
 
 const DEFAULT_MAX_ITERATIONS = 50;
 const DEFAULT_TOKEN_BUDGET = 100_000;
-// llama-3.3-70b-versatile's (the current default model, src/provider/groq.ts) documented
-// context window; fully overridable via opts.contextWindowSize.
-const DEFAULT_CONTEXT_WINDOW_SIZE = 128_000;
+// llama-3.3-70b-versatile's (the current default model, src/provider/groq.ts) context
+// window; confirmed via console.groq.com/docs/models, 2026-08-02. Fully overridable via
+// opts.contextWindowSize.
+const DEFAULT_CONTEXT_WINDOW_SIZE = 131_072;
 const DEFAULT_COMPACTION_THRESHOLD = 0.5;
 const DEFAULT_PRESERVE_RECENT_MESSAGES = 20;
 
