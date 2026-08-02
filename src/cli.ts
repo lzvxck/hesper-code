@@ -88,6 +88,9 @@ function printEvent(event: LoopEvent): void {
     case "permission-denied":
       console.log(`✗ ${event.name} blocked`);
       break;
+    case "compacted":
+      console.log(`\n⚙ compacted ${event.evictedCount} messages`);
+      break;
     case "done":
       console.log(`\n(done: ${event.reason})`);
       break;
