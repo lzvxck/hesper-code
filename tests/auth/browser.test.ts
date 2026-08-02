@@ -59,4 +59,20 @@ describe("openBrowser", () => {
 
     await expect(openBrowser("https://example.com/device", spawnFn)).resolves.toBeUndefined();
   });
+
+  test("reports a non-zero exit code instead of treating it as success", async () => {
+    setPlatform("linux");
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (msg: string) => errors.push(String(msg));
+    const spawnFn = async () => ({ stdout: "", stderr: "no handler for URL type", exitCode: 1 });
+
+    try {
+      await expect(openBrowser("https://example.com/device", spawnFn)).resolves.toBeUndefined();
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(errors).toEqual(["Failed to open browser (exit code 1): no handler for URL type"]);
+  });
 });

@@ -12,7 +12,10 @@ function commandFor(url: string): [string, string[]] {
 export async function openBrowser(url: string, spawnFn: typeof spawnCollectReal = spawnCollectReal): Promise<void> {
   const [executable, args] = commandFor(url);
   try {
-    await spawnFn(executable, args);
+    const result = await spawnFn(executable, args);
+    if (result.exitCode !== 0) {
+      console.error(`Failed to open browser (exit code ${result.exitCode}): ${result.stderr.trim()}`);
+    }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
   }
