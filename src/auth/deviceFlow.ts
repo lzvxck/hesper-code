@@ -17,7 +17,8 @@ export type DeviceAuthorization = {
 export type TokenResult =
   | { status: "success"; accessToken: string; refreshToken: string; user: { id: string; email: string } }
   | { status: "denied" }
-  | { status: "expired" };
+  | { status: "expired" }
+  | { status: "error"; message: string };
 
 export async function requestDeviceCode(clientId: string, fetchFn: typeof fetch = fetch): Promise<DeviceAuthorization> {
   const response = await fetchFn(AUTHORIZE_DEVICE_URL, {
@@ -87,7 +88,9 @@ export async function pollForToken(
       continue;
     }
     if (body.error === "expired_token") return { status: "expired" };
-    // access_denied and any other terminal error (invalid_request/invalid_client/...) stop polling.
-    return { status: "denied" };
+    if (body.error === "access_denied") return { status: "denied" };
+    // Any other terminal error (invalid_request/invalid_client/a transient 5xx/...) stops
+    // polling but is distinct from a real user denial.
+    return { status: "error", message: `WorkOS returned an unexpected error during authentication: ${body.error ?? response.status}` };
   }
 }

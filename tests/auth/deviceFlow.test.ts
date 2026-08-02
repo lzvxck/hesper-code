@@ -123,6 +123,17 @@ describe("pollForToken", () => {
     expect(result).toEqual({ status: "expired" });
   });
 
+  test("an unexpected error code (e.g. invalid_client) is terminal and returns {status: 'error'}, not 'denied'", async () => {
+    const fetchFn = (async () => fakeResponse(false, { error: "invalid_client" })) as unknown as typeof fetch;
+
+    const result = await pollForToken("client_123", device, { fetchFn, sleep: async () => {}, now: () => 0 });
+
+    expect(result).toEqual({
+      status: "error",
+      message: "WorkOS returned an unexpected error during authentication: invalid_client",
+    });
+  });
+
   test("client-side backstop: expires when injected now() passes device.expiresIn before a terminal response arrives", async () => {
     let calls = 0;
     const fetchFn = (async () => {

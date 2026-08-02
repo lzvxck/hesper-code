@@ -2,22 +2,32 @@ import { clearAuthSession, loadAuthSession, saveAuthSession } from "./authStore"
 import { openBrowser } from "./browser";
 import { pollForToken, requestDeviceCode } from "./deviceFlow";
 
-export async function login(mode: "login" | "signup", clientId: string, configDir: string): Promise<void> {
-  const device = await requestDeviceCode(clientId);
+export async function login(
+  mode: "login" | "signup",
+  clientId: string,
+  configDir: string,
+  deps: { requestDeviceCode?: typeof requestDeviceCode; openBrowser?: typeof openBrowser; pollForToken?: typeof pollForToken } = {},
+): Promise<void> {
+  const requestDeviceCodeFn = deps.requestDeviceCode ?? requestDeviceCode;
+  const openBrowserFn = deps.openBrowser ?? openBrowser;
+  const pollForTokenFn = deps.pollForToken ?? pollForToken;
+
+  const device = await requestDeviceCodeFn(clientId);
 
   console.log(`To continue, open: ${device.verificationUri}`);
   console.log(`And enter code: ${device.userCode}`);
-  await openBrowser(device.verificationUriComplete);
+  await openBrowserFn(device.verificationUriComplete);
 
-  const result = await pollForToken(clientId, device);
+  const result = await pollForTokenFn(clientId, device);
 
   if (result.status === "denied") {
-    console.error("Authorization was denied.");
-    return;
+    throw new Error("Authorization was denied.");
   }
   if (result.status === "expired") {
-    console.error("The login request expired. Please try again.");
-    return;
+    throw new Error("The login request expired. Please try again.");
+  }
+  if (result.status === "error") {
+    throw new Error(result.message);
   }
 
   saveAuthSession(
