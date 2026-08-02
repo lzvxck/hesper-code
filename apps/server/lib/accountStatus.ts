@@ -2,9 +2,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type SubscriptionStatus = "active" | "canceled" | "past_due" | "revoked";
 
+export type AccountStatusUpsertParams = {
+  workosUserId: string;
+  email: string | null;
+  polarCustomerId: string;
+  status: SubscriptionStatus;
+};
+
 export async function upsertAccountStatus(
   supabase: SupabaseClient,
-  params: { workosUserId: string; email: string | null; polarCustomerId: string; status: SubscriptionStatus },
+  params: AccountStatusUpsertParams,
 ): Promise<void> {
   const { error } = await supabase.from("account_status").upsert(
     {

@@ -7,7 +7,11 @@ import type { WebhookSubscriptionRevokedPayload } from "@polar-sh/sdk/models/com
 import type { WebhookSubscriptionUncanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionuncanceledpayload";
 import type { WebhookSubscriptionUpdatedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionupdatedpayload";
 import { getSupabaseClient } from "../../../../lib/supabase";
-import { type SubscriptionStatus, upsertAccountStatus } from "../../../../lib/accountStatus";
+import {
+  type AccountStatusUpsertParams,
+  type SubscriptionStatus,
+  upsertAccountStatus,
+} from "../../../../lib/accountStatus";
 
 export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | null {
   switch (polarStatus) {
@@ -26,7 +30,7 @@ export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | 
 export function toAccountStatusParams(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
-): { workosUserId: string; email: string | null; polarCustomerId: string; status: SubscriptionStatus } | null {
+): AccountStatusUpsertParams | null {
   if (!customer.externalId) return null;
   return {
     workosUserId: customer.externalId,
@@ -54,7 +58,10 @@ function syncSubscription(
     | WebhookSubscriptionUpdatedPayload,
 ): Promise<void> {
   const status = toSubscriptionStatus(payload.data.status);
-  if (!status) return Promise.resolve();
+  if (!status) {
+    console.warn(`Polar webhook: unrecognized subscription status "${payload.data.status}", skipping upsert`);
+    return Promise.resolve();
+  }
   return upsertFromCustomer(payload.data.customer, status);
 }
 
