@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateText } from "ai";
 import type { LanguageModel, LanguageModelUsage, ModelMessage } from "ai";
 import { z } from "zod";
 
@@ -37,13 +37,14 @@ export async function compactMessages(
   evictBoundary: number,
 ): Promise<{ messages: ModelMessage[]; summary: CompactionSummary; evictedCount: number; usage: LanguageModelUsage }> {
   const evicted = messages.slice(0, evictBoundary);
-  const { object: summary, usage } = await generateObject({
+  const { text, usage } = await generateText({
     model,
-    schema: CompactionSummarySchema,
     system:
       "You are summarizing the older portion of an in-progress coding agent session so it can be replaced with a compact recap.",
-    prompt: `Summarize this JSON-encoded transcript of earlier conversation turns into a structured recap with four fields: goal, progress, blockers, nextSteps.\n\nTranscript:\n${JSON.stringify(evicted)}`,
+    prompt: `Summarize this JSON-encoded transcript of earlier conversation turns into a structured recap with four fields: goal, progress, blockers, nextSteps.\n\nRespond with ONLY a JSON object with exactly those four string fields — no markdown code fences, no explanation before or after.\n\nTranscript:\n${JSON.stringify(evicted)}`,
   });
+  const stripped = text.trim().replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  const summary = CompactionSummarySchema.parse(JSON.parse(stripped));
 
   const summaryMessage: ModelMessage = {
     role: "user",
