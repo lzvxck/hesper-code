@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 import type { ModelMessage } from "ai";
 import pkg from "../package.json";
 import { loadAgentsFile as loadAgentsFileReal } from "./agents/loadAgentsFile";
+import { login as loginReal, logout as logoutReal } from "./auth/commands";
+import { DEFAULT_WORKOS_CLIENT_ID } from "./auth/deviceFlow";
 import { getConfigDir } from "./config/paths";
 import { cycleMode } from "./gate/gate";
 import { type ApprovalPrompt, type LoopEvent, runLoop as runLoopReal } from "./loop/loop";
@@ -16,6 +18,9 @@ type CliDeps = {
   getGroqModel?: typeof getGroqModelReal;
   loadAgentsFile?: typeof loadAgentsFileReal;
   sessionsDir?: string;
+  authConfigDir?: string;
+  login?: typeof loginReal;
+  logout?: typeof logoutReal;
 };
 
 function parseTaskArgs(argv: string[]): { resuming: boolean; resumeId: string | undefined; taskText: string } {
@@ -103,6 +108,17 @@ function printEvent(event: LoopEvent): void {
 export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   if (argv.length === 0 || argv.includes("--version") || argv.includes("-v")) {
     if (argv.includes("--version") || argv.includes("-v")) console.log(`hesper ${pkg.version}`);
+    return 0;
+  }
+
+  if (argv[0] === "login" || argv[0] === "signup") {
+    const loginFn = deps.login ?? loginReal;
+    await loginFn(argv[0], DEFAULT_WORKOS_CLIENT_ID, deps.authConfigDir ?? getConfigDir());
+    return 0;
+  }
+  if (argv[0] === "logout") {
+    const logoutFn = deps.logout ?? logoutReal;
+    logoutFn(deps.authConfigDir ?? getConfigDir());
     return 0;
   }
 
