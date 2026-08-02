@@ -35,6 +35,13 @@ describe("requestDeviceCode", () => {
     expect(captured?.init.headers).toEqual({ "Content-Type": "application/json" });
     expect(captured?.init.body).toBe(JSON.stringify({ client_id: "client_123" }));
   });
+
+  test("throws when the response is not ok instead of returning undefined fields", async () => {
+    const fetchFn = async () =>
+      ({ ok: false, status: 429, json: async () => ({ error: "rate_limited" }) }) as Response;
+
+    await expect(requestDeviceCode("client_123", fetchFn as unknown as typeof fetch)).rejects.toThrow();
+  });
 });
 
 describe("pollForToken", () => {

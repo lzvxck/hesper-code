@@ -26,6 +26,9 @@ export async function requestDeviceCode(clientId: string, fetchFn: typeof fetch 
     body: JSON.stringify({ client_id: clientId }),
   });
   const body = await response.json();
+  if (!response.ok) {
+    throw new Error(`WorkOS device authorization failed with status ${response.status}: ${JSON.stringify(body)}`);
+  }
   return {
     deviceCode: body.device_code,
     userCode: body.user_code,
