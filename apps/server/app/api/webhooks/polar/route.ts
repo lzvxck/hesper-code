@@ -32,18 +32,35 @@ export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | 
 }
 
 /*
- * The mapping itself lives in @seri/plans, shared with the portal that reads this column —
- * a webhook writing a label the reader resolves to null is a silent failure neither side
- * would notice. What is decided *here* is the policy for an unconfigured deployment, which
- * is caller-specific: this writer throws, because a 5xx Polar retries beats writing a null
- * plan into every row, whereas the portal's reader stays quiet so a page still renders.
+ * The mapping itself lives in @seri/plans, shared with the portal that reads this column.
+ *
+ * Neither branch below throws, and that is a reversal worth explaining. Failing fast was
+ * once defensible because a null plan silently misled the portal — it read the null as
+ * "free" and offered a paying customer a second subscription. The portal no longer trusts
+ * a null plan at all and resolves from Polar instead, so the throw stopped buying anything
+ * and kept its whole cost: this function runs for *every* event type, nothing upstream
+ * catches it (adapter-utils calls the handler synchronously, @polar-sh/nextjs awaits it
+ * bare), so an unconfigured deployment 500s on every webhook. That takes down
+ * `subscription_status` too, which works today and has nothing to do with plans, and Polar
+ * eventually stops retrying — leaving rows permanently stale.
+ *
+ * So both cases write null, at two volumes: missing configuration is an operator error and
+ * is logged as an error, while an id that simply is not ours in an otherwise complete
+ * environment is routine and only warns.
  */
 export function toPlan(productId: string, env: ProductEnv = process.env): Plan | null {
   const missing = missingProductVars(env);
   if (missing.length > 0) {
-    throw new Error(`Polar webhook: cannot resolve a plan, ${missing.join(", ")} not set`);
+    console.error(
+      `Polar webhook: cannot resolve a plan, ${missing.join(", ")} not set; writing plan as null`,
+    );
+    return null;
   }
-  return planForProductId(productId, env);
+  const plan = planForProductId(productId, env);
+  if (!plan) {
+    console.warn(`Polar webhook: unrecognized product id "${productId}", writing plan as null`);
+  }
+  return plan;
 }
 
 export function toAccountStatusParams(
@@ -67,11 +84,7 @@ function upsertFromCustomer(
   productId: string,
   supabase: SupabaseClient = getSupabaseClient(),
 ): Promise<void> {
-  const plan = toPlan(productId);
-  if (!plan) {
-    console.warn(`Polar webhook: unrecognized product id "${productId}", writing plan as null`);
-  }
-  const params = toAccountStatusParams(customer, status, plan);
+  const params = toAccountStatusParams(customer, status, toPlan(productId));
   if (!params) {
     console.warn(`Polar webhook: customer ${customer.id} has no externalId, skipping upsert`);
     return Promise.resolve();

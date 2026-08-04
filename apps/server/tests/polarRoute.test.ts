@@ -29,6 +29,16 @@ describe("toSubscriptionStatus", () => {
   );
 });
 
+// Returns a restore function rather than using afterEach, so a test that asserts on the
+// captured output cannot leave console.error swapped out if it fails partway.
+function captureError(sink: unknown[]): () => void {
+  const original = console.error;
+  console.error = (...args: unknown[]) => void sink.push(args.join(" "));
+  return () => {
+    console.error = original;
+  };
+}
+
 function fakeCustomer(overrides: Partial<SubscriptionCustomer>): SubscriptionCustomer {
   return { id: "cus_1", externalId: "user_1", email: "a@example.com", ...overrides } as SubscriptionCustomer;
 }
@@ -50,20 +60,42 @@ describe("toPlan", () => {
   });
 
   /*
-   * Not a warning. Writing null into every row is what let the portal read a paying
-   * customer as unplanned and sell them a second subscription — the throw becomes a 5xx
-   * Polar retries, so the row stays unwritten until the deployment is configured.
+   * Deliberately not a throw. toPlan runs for every event type and nothing upstream catches
+   * it, so throwing here 500s the whole webhook — taking subscription_status down with it,
+   * which is unrelated to plans and works today. Writing null is safe now that the portal
+   * resolves a null plan from Polar rather than believing it.
    */
-  test("throws, naming every missing variable, when nothing is configured", () => {
-    expect(() => toPlan("prod_free", {})).toThrow(
+  test("returns null, naming every missing variable, when nothing is configured", () => {
+    const logged: unknown[] = [];
+    const restore = captureError(logged);
+
+    expect(toPlan("prod_free", {})).toBeNull();
+
+    restore();
+    expect(String(logged[0])).toContain(
       "POLAR_PRODUCT_FREE, POLAR_PRODUCT_PRO, POLAR_PRODUCT_MAX, POLAR_PRODUCT_ULTRA not set",
     );
   });
 
-  test("throws when only some of the variables are set", () => {
-    const partial = { POLAR_PRODUCT_FREE: "prod_free", POLAR_PRODUCT_PRO: "prod_pro" };
+  test("names only the missing variables when the configuration is partial", () => {
+    const logged: unknown[] = [];
+    const restore = captureError(logged);
 
-    expect(() => toPlan("prod_free", partial)).toThrow("POLAR_PRODUCT_MAX, POLAR_PRODUCT_ULTRA not set");
+    expect(toPlan("prod_free", { POLAR_PRODUCT_FREE: "prod_free", POLAR_PRODUCT_PRO: "prod_pro" })).toBeNull();
+
+    restore();
+    expect(String(logged[0])).toContain("POLAR_PRODUCT_MAX, POLAR_PRODUCT_ULTRA not set");
+  });
+
+  // An operator error, distinct from the routine case above it, and logged louder.
+  test("logs missing configuration at error level, not warn", () => {
+    const errors: unknown[] = [];
+    const restore = captureError(errors);
+
+    toPlan("prod_free", {});
+
+    restore();
+    expect(errors).toHaveLength(1);
   });
 });
 
