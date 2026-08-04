@@ -1,10 +1,11 @@
 import type { Polar } from "@polar-sh/sdk";
 import type { CustomerState } from "@polar-sh/sdk/models/components/customerstate";
+import { type Plan, type ProductEnv, productIdForPlan } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAccountStatus } from "./accountStatus";
-import { type Plan, type ProductEnv, freeSubscription, paidSubscription, productIdForPlan } from "./plans";
-import { getCustomerState, revokeSupersededFree } from "./polar";
+import { getCustomerState } from "./polar";
 import type { SessionUser } from "./session";
+import { freeSubscription, paidSubscription, revokeSupersededFree } from "./subscriptions";
 
 export type ProvisioningDeps = {
   supabase: SupabaseClient;
@@ -29,6 +30,22 @@ async function ensureCustomer(polar: Polar, user: SessionUser): Promise<Customer
     const raced = await getCustomerState(polar, user.userId);
     if (!raced) throw error;
     return raced;
+  }
+}
+
+/*
+ * The same recovery as ensureCustomer, one step later, and the predicate differs on
+ * purpose: there a customer either exists or does not, whereas here Polar has no
+ * "subscription for this product" lookup, so the question that can actually be asked is
+ * whether the customer now holds any active subscription at all. That is sound because
+ * this only runs when the check above found none.
+ */
+async function ensureFreeSubscription(polar: Polar, userId: string, freeProductId: string): Promise<void> {
+  try {
+    await polar.subscriptions.create({ productId: freeProductId, externalCustomerId: userId });
+  } catch (error) {
+    const raced = await getCustomerState(polar, userId);
+    if (!raced?.activeSubscriptions.length) throw error;
   }
 }
 
@@ -74,12 +91,7 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
   // cannot identify risks charging twice, so report the uncertainty rather than write.
   if (subscriptions.length > 0) return freeSubscription(subscriptions, deps.products) ? "free" : null;
 
-  try {
-    await deps.polar.subscriptions.create({ productId: freeProductId, externalCustomerId: user.userId });
-  } catch (error) {
-    const raced = await getCustomerState(deps.polar, user.userId);
-    if (!raced?.activeSubscriptions.length) throw error;
-  }
+  await ensureFreeSubscription(deps.polar, user.userId, freeProductId);
 
   // Returned rather than re-read: the webhook that writes the row has not necessarily
   // arrived yet, and only later visits depend on it.

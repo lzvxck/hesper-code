@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
-// @seri/ui ships raw TSX, so Next has to compile it rather than treat it as a built dep.
+// Both ship raw TS(X), so Next has to compile them rather than treat them as built deps.
 const nextConfig: NextConfig = {
-  transpilePackages: ["@seri/ui"],
+  transpilePackages: ["@seri/ui", "@seri/plans"],
 };
 
 export default nextConfig;

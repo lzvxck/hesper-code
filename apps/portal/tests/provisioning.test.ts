@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Polar } from "@polar-sh/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensureProvisioned } from "../lib/provisioning";
+import type { ActiveSubscription } from "../lib/subscriptions";
 
 const PRODUCTS = {
   POLAR_PRODUCT_FREE: "prod_free",
@@ -29,7 +30,12 @@ function fakeSupabase(row: Record<string, unknown> | null) {
   return { client: client as unknown as SupabaseClient, filters };
 }
 
-type FakeState = { activeSubscriptions: { id: string; productId: string }[] } | null;
+type FakeState = { activeSubscriptions: ActiveSubscription[] } | null;
+
+// Free costs nothing and is not winding down, unless a test says otherwise.
+function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
+  return { id, productId, amount: productId === "prod_free" ? 0 : 2000, cancelAtPeriodEnd: false, ...overrides };
+}
 
 function polarError(statusCode: number) {
   return Object.assign(new Error(`polar responded ${statusCode}`), { statusCode });
@@ -110,7 +116,7 @@ describe("ensureProvisioned", () => {
    */
   test("ignores an active row whose plan column is null and asks Polar instead", async () => {
     const { client: supabase } = fakeSupabase({ plan: null, subscription_status: "active" });
-    const { client: polar } = fakePolar([{ activeSubscriptions: [{ id: "sub_1", productId: "prod_max" }] }]);
+    const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_1", "prod_max")] }]);
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("max");
   });
@@ -118,7 +124,7 @@ describe("ensureProvisioned", () => {
   test("creates nothing when Polar already has the customer and an active subscription", async () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([
-      { activeSubscriptions: [{ id: "sub_1", productId: "prod_free" }] },
+      { activeSubscriptions: [sub("sub_1", "prod_free")] },
     ]);
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
@@ -129,7 +135,7 @@ describe("ensureProvisioned", () => {
   // already be on a paid product. Reporting "free" there would understate it.
   test("reports the paid plan of an existing subscription when our row has not landed yet", async () => {
     const { client: supabase } = fakeSupabase(null);
-    const { client: polar } = fakePolar([{ activeSubscriptions: [{ id: "sub_1", productId: "prod_pro" }] }]);
+    const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_1", "prod_pro")] }]);
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("pro");
   });
@@ -143,8 +149,8 @@ describe("ensureProvisioned", () => {
     const { client: polar } = fakePolar([
       {
         activeSubscriptions: [
-          { id: "sub_free", productId: "prod_free" },
-          { id: "sub_paid", productId: "prod_ultra" },
+          sub("sub_free", "prod_free"),
+          sub("sub_paid", "prod_ultra"),
         ],
       },
     ]);
@@ -157,8 +163,8 @@ describe("ensureProvisioned", () => {
     const { client: polar, calls } = fakePolar([
       {
         activeSubscriptions: [
-          { id: "sub_free", productId: "prod_free" },
-          { id: "sub_paid", productId: "prod_pro" },
+          sub("sub_free", "prod_free"),
+          sub("sub_paid", "prod_pro"),
         ],
       },
     ]);
@@ -168,10 +174,31 @@ describe("ensureProvisioned", () => {
     expect(calls).toContainEqual({ method: "subscriptions.revoke", args: { id: "sub_free" } });
   });
 
+  /*
+   * The backstop for a POLAR_PRODUCT_FREE pointed at a paid product by mistake. Without the
+   * amount check, that one configuration typo cancels a subscription somebody is paying for
+   * — irreversibly, on a page load.
+   */
+  test("never revokes a subscription that costs money, whatever the config says is free", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar([
+      {
+        activeSubscriptions: [
+          sub("sub_mislabelled", "prod_free", { amount: 2000 }),
+          sub("sub_paid", "prod_pro"),
+        ],
+      },
+    ]);
+
+    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
+
+    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+  });
+
   test("leaves a lone free subscription alone", async () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([
-      { activeSubscriptions: [{ id: "sub_free", productId: "prod_free" }] },
+      { activeSubscriptions: [sub("sub_free", "prod_free")] },
     ]);
 
     await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
@@ -183,7 +210,7 @@ describe("ensureProvisioned", () => {
   test("reports null and writes nothing when the only active product is unrecognized", async () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([
-      { activeSubscriptions: [{ id: "sub_x", productId: "prod_from_another_environment" }] },
+      { activeSubscriptions: [sub("sub_x", "prod_from_another_environment")] },
     ]);
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBeNull();
@@ -216,7 +243,7 @@ describe("ensureProvisioned", () => {
   test("treats a duplicate subscription from a concurrent first visit as success", async () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar(
-      [null, { activeSubscriptions: [{ id: "sub_1", productId: "prod_free" }] }],
+      [null, { activeSubscriptions: [sub("sub_1", "prod_free")] }],
       "subscriptions.create",
     );
 

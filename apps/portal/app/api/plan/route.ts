@@ -1,4 +1,5 @@
 import { changePlan } from "@/lib/billing";
+import { portalOrigin } from "@/lib/origin";
 import { getPolarClient } from "@/lib/polar";
 import { getSessionUser } from "@/lib/session";
 
@@ -8,7 +9,7 @@ export async function POST(request: Request): Promise<Response> {
   const { userId } = await getSessionUser();
   const form = await request.formData();
   return changePlan(
-    { polar: getPolarClient(), products: process.env, userId, origin: new URL(request.url).origin },
+    { polar: getPolarClient(), products: process.env, userId, origin: portalOrigin() },
     form.get("plan"),
   );
 }

@@ -6,13 +6,16 @@ import type { WebhookSubscriptionCreatedPayload } from "@polar-sh/sdk/models/com
 import type { WebhookSubscriptionRevokedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionrevokedpayload";
 import type { WebhookSubscriptionUncanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionuncanceledpayload";
 import type { WebhookSubscriptionUpdatedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionupdatedpayload";
+import {
+  type Plan,
+  type ProductEnv,
+  type SubscriptionStatus,
+  missingProductVars,
+  planForProductId,
+} from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "../../../../lib/supabase";
-import {
-  type AccountStatusUpsertParams,
-  type SubscriptionStatus,
-  upsertAccountStatus,
-} from "../../../../lib/accountStatus";
+import { type AccountStatusUpsertParams, upsertAccountStatus } from "../../../../lib/accountStatus";
 
 export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | null {
   switch (polarStatus) {
@@ -28,36 +31,25 @@ export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | 
   }
 }
 
-const PLAN_PRODUCT_ENV_VAR: Record<string, string> = {
-  free: "POLAR_PRODUCT_FREE",
-  pro: "POLAR_PRODUCT_PRO",
-  max: "POLAR_PRODUCT_MAX",
-  ultra: "POLAR_PRODUCT_ULTRA",
-};
-
 /*
- * Product ids differ between the Polar sandbox and production, so the mapping is
- * configuration rather than a constant, and the record is injected so a test needs no
- * environment of its own.
- *
- * Unconfigured throws rather than warning. This webhook is the only writer of
- * account_status.plan, and a deployment missing these variables silently wrote null into
- * every row — which the portal then read as "no plan", routed at checkout, and sold the
- * customer a second subscription. Failing here returns a 5xx that Polar retries, so the
- * rows stay unwritten until somebody sets the variables, instead of being written wrong.
+ * The mapping itself lives in @seri/plans, shared with the portal that reads this column —
+ * a webhook writing a label the reader resolves to null is a silent failure neither side
+ * would notice. What is decided *here* is the policy for an unconfigured deployment, which
+ * is caller-specific: this writer throws, because a 5xx Polar retries beats writing a null
+ * plan into every row, whereas the portal's reader stays quiet so a page still renders.
  */
-export function toPlan(productId: string, env: Record<string, string | undefined> = process.env): string | null {
-  const missing = Object.values(PLAN_PRODUCT_ENV_VAR).filter((name) => !env[name]);
+export function toPlan(productId: string, env: ProductEnv = process.env): Plan | null {
+  const missing = missingProductVars(env);
   if (missing.length > 0) {
     throw new Error(`Polar webhook: cannot resolve a plan, ${missing.join(", ")} not set`);
   }
-  return Object.keys(PLAN_PRODUCT_ENV_VAR).find((plan) => env[PLAN_PRODUCT_ENV_VAR[plan]!] === productId) ?? null;
+  return planForProductId(productId, env);
 }
 
 export function toAccountStatusParams(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
-  plan: string | null,
+  plan: Plan | null,
 ): AccountStatusUpsertParams | null {
   if (!customer.externalId) return null;
   return {

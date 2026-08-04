@@ -1,6 +1,7 @@
 import type { Polar } from "@polar-sh/sdk";
-import { type ProductEnv, isPaidPlan, isUpgrade, paidSubscription, planForProductId, productIdForPlan } from "./plans";
-import { getCustomerState, polarStatusCode, revokeSupersededFree } from "./polar";
+import { type ProductEnv, isPaidPlan, isUpgrade, planForProductId, productIdForPlan } from "@seri/plans";
+import { getCustomerState, polarStatusCode } from "./polar";
+import { type ActiveSubscription, paidSubscription, revokeSupersededFree } from "./subscriptions";
 
 /*
  * `userId` is the AuthKit session's, supplied by the route. A plan label is the only thing
@@ -28,6 +29,26 @@ function unconfigured(plan: string): Response {
   return new Response("That plan is unavailable right now.", { status: 500 });
 }
 
+/*
+ * Polar keeps a subscription that is only *scheduled* to cancel inside activeSubscriptions,
+ * while our own row already reads "canceled" — the webhook's comment records that
+ * `data.status` stays "active" through the whole notice period.
+ *
+ * Neither route can serve that account: an update answers 403 AlreadyCanceledSubscription,
+ * and a checkout would sell a second subscription alongside the one still running. Both
+ * therefore give the same instruction, and it is the only one that actually works — resume
+ * it in Polar's portal. Telling them to "start a new one" or to "change it under Manage
+ * billing" were two different impossible remedies.
+ */
+const SCHEDULED_TO_CANCEL =
+  "This subscription is scheduled to cancel at the end of the period. Resume it under Manage billing, then change your plan.";
+
+function scheduledToCancel(subscriptions: ActiveSubscription[]): boolean {
+  return subscriptions.some((s) => s.cancelAtPeriodEnd);
+}
+
+const ALREADY_PAID = "This account already has a paid subscription; change it under Manage billing.";
+
 export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<Response> {
   if (!isPaidPlan(plan)) return new Response("unknown plan", { status: 400 });
   const productId = productIdForPlan(plan, deps.products);
@@ -43,9 +64,7 @@ export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<
   const state = await getCustomerState(deps.polar, deps.userId);
   const subscriptions = state?.activeSubscriptions ?? [];
   if (subscriptions.some((s) => planForProductId(s.productId, deps.products) !== "free")) {
-    return new Response("This account already has a paid subscription; change it under Manage billing.", {
-      status: 409,
-    });
+    return new Response(scheduledToCancel(subscriptions) ? SCHEDULED_TO_CANCEL : ALREADY_PAID, { status: 409 });
   }
 
   /*
@@ -77,7 +96,11 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
       status: 409,
     });
   }
-  await revokeSupersededFree(deps.polar, subscriptions, deps.products);
+
+  // Ask before Polar 403s, so the answer can say what to do about it.
+  if (current.subscription.cancelAtPeriodEnd) {
+    return new Response(SCHEDULED_TO_CANCEL, { status: 409 });
+  }
 
   /*
    * Per direction, not one setting for both. An upgrade is invoiced now, which is what the
@@ -101,11 +124,14 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
      * than a server fault.
      */
     if (polarStatusCode(error) === 403) {
-      return new Response("This subscription is canceled and cannot be changed; start a new one instead.", {
-        status: 409,
-      });
+      return new Response(SCHEDULED_TO_CANCEL, { status: 409 });
     }
     throw error;
   }
+
+  // Only now. Revoking is irreversible and the update above is not guaranteed to succeed —
+  // doing this first would cancel the free fallback and then leave the account on the plan
+  // it was already on.
+  await revokeSupersededFree(deps.polar, subscriptions, deps.products);
   return seeOther("/");
 }

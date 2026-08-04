@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { type SubscriptionStatus, upsertAccountStatus } from "../lib/accountStatus";
+import { SUBSCRIPTION_STATUSES } from "@seri/plans";
+import { upsertAccountStatus } from "../lib/accountStatus";
 
 function fakeSupabase(error: unknown = null) {
   const calls: { table: string; row: unknown; opts: unknown }[] = [];
@@ -16,9 +17,7 @@ function fakeSupabase(error: unknown = null) {
 }
 
 describe("upsertAccountStatus", () => {
-  const statuses: SubscriptionStatus[] = ["active", "canceled", "past_due", "revoked"];
-
-  for (const status of statuses) {
+  for (const status of SUBSCRIPTION_STATUSES) {
     test(`upserts account_status with subscription_status "${status}"`, async () => {
       const { client, calls } = fakeSupabase();
 

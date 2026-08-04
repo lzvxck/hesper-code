@@ -1,13 +1,17 @@
+import type { Plan, SubscriptionStatus } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type SubscriptionStatus = "active" | "canceled" | "past_due" | "revoked";
-
+/*
+ * Both unions come from @seri/plans, the same module the portal parses this table back
+ * through. `plan` used to be a bare `string` here — the single writer of the column having
+ * the weakest type of anyone who touches it.
+ */
 export type AccountStatusUpsertParams = {
   workosUserId: string;
   email: string | null;
   polarCustomerId: string;
   status: SubscriptionStatus;
-  plan: string | null;
+  plan: Plan | null;
 };
 
 export async function upsertAccountStatus(

@@ -1,7 +1,7 @@
+import { INCLUDED_SPEND_RATIO, PAID_PLANS, PLAN_MONTHLY_USD, type PaidPlan, isPaidPlan } from "@seri/plans";
 import { Button, SiteFooter, SiteNav } from "@seri/ui";
 
 import { endSession } from "@/lib/actions";
-import { isPaidPlan } from "@/lib/plans";
 import { getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
@@ -9,12 +9,19 @@ import { getSupabaseClient } from "@/lib/supabase";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
 
-// Included spend is 75% of list price across the ladder — see docs-tmp/pricing-tiers.md.
-const TIERS = [
-  { plan: "pro", name: "Pro", price: "$20", included: "$15" },
-  { plan: "max", name: "Max", price: "$100", included: "$75" },
-  { plan: "ultra", name: "Ultra", price: "$200", included: "$150" },
-];
+const TIER_NAME: Record<PaidPlan, string> = { pro: "Pro", max: "Max", ultra: "Ultra" };
+
+/*
+ * Derived from PAID_PLANS rather than written out again, so the ladder the page renders is
+ * the same ordered list isUpgrade decides directions from — the previous copy could be
+ * reordered or repriced on its own and nothing would have noticed.
+ */
+const TIERS = PAID_PLANS.map((plan) => ({
+  plan,
+  name: TIER_NAME[plan],
+  price: PLAN_MONTHLY_USD[plan],
+  included: PLAN_MONTHLY_USD[plan] * INCLUDED_SPEND_RATIO,
+}));
 
 export default async function AccountPage() {
   const user = await getSessionUser();
@@ -51,10 +58,10 @@ export default async function AccountPage() {
               <div key={tier.plan} className="border border-ink-hairline p-11">
                 <h2 className="font-mono text-mono font-bold tracking-[-0.4px]">{tier.name}</h2>
                 <p className="mt-8 text-[28px] leading-[1.1] font-bold tracking-[-0.8px]">
-                  {tier.price}
+                  {`$${tier.price}`}
                   <span className="text-ink-subtle text-body font-normal">/mo</span>
                 </p>
-                <p className="mt-8 text-ink-subtle">{tier.included}/mo of included usage</p>
+                <p className="mt-8 text-ink-subtle">{`$${tier.included}/mo of included usage`}</p>
                 <form action={action} method="post" className="mt-11">
                   <input type="hidden" name="plan" value={tier.plan} />
                   <Button type="submit" disabled={plan === tier.plan}>
