@@ -17,13 +17,15 @@ export type AccountStatusUpsertParams = {
 export type StoredAccountStatus = { plan: string | null; subscription_status: string | null };
 
 /*
- * account_status holds one row per customer (onConflict: workos_user_id), but the design
- * deliberately gives a paying customer *two* Polar subscriptions: the API-created Free one,
- * which nothing cancels, plus the paid one. Both emit webhooks and both would upsert this
- * single row, so whichever event lands last wins — and a Free renewal landing after a paid
- * event rewrites a Max customer as plan="free". The portal then reads "free", offers the
- * upgrade button, and /api/checkout refuses it with a 409 because Polar still shows the paid
- * subscription. The customer is left with no working action at all.
+ * account_status holds one row per customer (onConflict: workos_user_id), and events for
+ * more than one subscription land in it.
+ *
+ * The original reason was an assumption — since disproved — that a Free subscription ran
+ * alongside a paid one. Polar permits only one at a time, so this now guards a narrower but
+ * still real ordering hazard: upgrading revokes the Free subscription immediately before the
+ * paid one is created, so a `subscription.revoked` for the free product is in flight at the
+ * same moment as the paid events. Arriving late, it would rewrite a paying customer as
+ * plan="free", status="revoked".
  *
  * Paid is authoritative, so a free-product event is dropped whole — including its
  * subscription_status, which otherwise reports the *free* subscription's lifecycle for a

@@ -2,7 +2,12 @@ import type { Polar } from "@polar-sh/sdk";
 import type { SubscriptionUpdate } from "@polar-sh/sdk/models/components/subscriptionupdate";
 import { type ProductEnv, isPaidPlan, isUpgrade, productIdForPlan, toPlan } from "@seri/plans";
 import { getCustomerState, polarStatusCode } from "./polar";
-import { type ActiveSubscription, holdsOnlyFree, paidSubscription } from "./subscriptions";
+import {
+  type ActiveSubscription,
+  holdsOnlyFree,
+  paidSubscription,
+  revokeFreeSubscription,
+} from "./subscriptions";
 
 /*
  * `userId` is the AuthKit session's, supplied by the route. A plan label is the only thing
@@ -92,10 +97,24 @@ export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<
   }
 
   /*
-   * Free -> paid has to be a checkout rather than an update: PATCHing a free subscription to
-   * a paid product answers 402 PaymentFailed: missing_payment_method, because the free
-   * subscription is created by API and never takes a card.
+   * Free -> paid has to be a checkout rather than an update: an update from a free product
+   * answers 402 PaymentFailed: missing_payment_method, because the free subscription never
+   * takes a card.
+   *
+   * And the free subscription has to go *first*. Polar permits one active subscription per
+   * customer and refuses the Subscribe step with "You already have an active subscription"
+   * while it is live — measured against a real checkout. So unlike every other irreversible
+   * step in this file, this one precedes the fallible operation, because the fallible
+   * operation cannot start otherwise.
+   *
+   * If the customer then abandons the checkout they are left with no subscription at all.
+   * That is deliberate and it self-heals: the next page load finds no active subscription
+   * and ensureProvisioned creates Free again. Do not add a lock or a rollback for it — the
+   * window is a few seconds, the repair is already written, and both alternatives are more
+   * moving parts than the problem.
    */
+  await revokeFreeSubscription(deps.polar, subscriptions, deps.products);
+
   const checkout = await deps.polar.checkouts.create({
     products: [productId],
     externalCustomerId: deps.userId,
@@ -118,12 +137,15 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
   /*
    * Down to Free is a cancellation of the paid subscription at the end of the period the
    * customer has already paid for — never a revoke, which would end it immediately and take
-   * away access they bought.
+   * away access they bought. There is no move-the-product-to-free alternative: that call
+   * returns 200 and silently does nothing, measured by re-fetching the subscription and
+   * finding it unchanged.
    *
-   * They land on Free with nothing further to do because the API-created free subscription
-   * has been running underneath the paid one the whole time. That coexistence is load
-   * bearing: anything that "tidies up" the free subscription while a paid one exists breaks
-   * this landing and drops the customer to no subscription at all.
+   * Landing on Free is *not* automatic. When the paid subscription lapses the customer holds
+   * no subscription at all, and Free is re-created by ensureProvisioned on their next visit.
+   * An earlier version of this comment claimed a free subscription kept running underneath
+   * the paid one; a live checkout disproved it — Polar allows one active subscription per
+   * customer.
    */
   if (target === "free") {
     return applyUpdate(deps, current.subscription.id, { cancelAtPeriodEnd: true });

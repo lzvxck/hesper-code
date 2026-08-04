@@ -93,9 +93,9 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
   const subscriptions = state?.activeSubscriptions ?? [];
 
   /*
-   * A paying customer keeps the Free subscription alongside the paid one — nothing cancels
-   * it, and nothing needs to. Selection is by product, so the extra row is inert here, and
-   * the webhook refuses to let its events overwrite an active paid row.
+   * Read by product rather than by position. Polar permits one active subscription per
+   * customer, so this is the only one — an earlier design assumed Free ran alongside a paid
+   * subscription, which a live checkout disproved.
    */
   const paid = paidSubscription(subscriptions, deps.products);
   if (paid) {
@@ -110,6 +110,14 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
     return { plan: holdsOnlyFree(subscriptions, deps.products) ? "free" : null, endsAt: null };
   }
 
+  /*
+   * No active subscription. Three ways to arrive here, and this one branch repairs all of
+   * them: a genuinely new customer; one whose paid subscription has lapsed after a downgrade
+   * to Free, since Polar allows only one subscription at a time and nothing is left running
+   * underneath; and one who abandoned a checkout after the free subscription was revoked to
+   * make room for it. The last two are why this must stay reachable — it is the only path
+   * back to Free.
+   */
   await ensureFreeSubscription(deps.polar, user.userId, freeProductId);
 
   // Returned rather than re-read: the webhook that writes the row has not necessarily

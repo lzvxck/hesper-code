@@ -1,3 +1,4 @@
+import type { Polar } from "@polar-sh/sdk";
 import { type PaidPlan, type ProductEnv, isPaidPlan, planForProductId } from "@seri/plans";
 
 /*
@@ -7,15 +8,19 @@ import { type PaidPlan, type ProductEnv, isPaidPlan, planForProductId } from "@s
 export type ActiveSubscription = {
   id: string;
   productId: string;
+  amount: number;
   cancelAtPeriodEnd: boolean;
   currentPeriodEnd: Date;
 };
 
 /*
- * Polar allows one customer to hold several active subscriptions at once, does not specify
- * the order of `activeSubscriptions`, and does not cancel the API-created Free subscription
- * when a paid checkout completes. So the account's real plan is the paid subscription if
- * there is one — picking [0] would be a coin flip between Free and Pro.
+ * `activeSubscriptions` is a list and its order is unspecified, so the account's plan is
+ * read from the entry whose product maps to a paid one rather than from [0].
+ *
+ * Measured since: Polar permits only **one** active subscription per customer, so in
+ * practice this list holds at most one entry. Selecting by product is kept anyway — it costs
+ * a loop, it is correct either way, and the alternative is an index whose correctness
+ * depends on a Polar invariant we do not control.
  */
 export function paidSubscription(
   subscriptions: ActiveSubscription[],
@@ -42,4 +47,35 @@ export function paidSubscription(
  */
 export function holdsOnlyFree(subscriptions: ActiveSubscription[], env: ProductEnv): boolean {
   return subscriptions.every((s) => planForProductId(s.productId, env) === "free");
+}
+
+function freeSubscription(subscriptions: ActiveSubscription[], env: ProductEnv): ActiveSubscription | null {
+  return subscriptions.find((s) => planForProductId(s.productId, env) === "free") ?? null;
+}
+
+/*
+ * Clears the Free subscription so a checkout can start.
+ *
+ * Polar permits one active subscription per customer, and refuses the Subscribe step with
+ * "You already have an active subscription" while the free one is live — measured against a
+ * real checkout, which is what disproved the earlier assumption that the two could coexist.
+ * There is no upgrade-in-place either: an update from a free product answers 402
+ * missing_payment_method, because the free subscription never took a card.
+ *
+ * Two guards, because this is irreversible: the subscription must map to the configured free
+ * product, and it must actually cost nothing. The second is the backstop for a
+ * POLAR_PRODUCT_FREE pointed at a paid product by mistake — no configuration typo may cancel
+ * a subscription somebody is paying for in order to sell them another.
+ *
+ * Failures propagate. This is a required step of the purchase, not bookkeeping: swallowing it
+ * would hand the customer a checkout that Polar then refuses at the last screen.
+ */
+export async function revokeFreeSubscription(
+  polar: Polar,
+  subscriptions: ActiveSubscription[],
+  products: ProductEnv,
+): Promise<void> {
+  const free = freeSubscription(subscriptions, products);
+  if (!free || free.amount !== 0) return;
+  await polar.subscriptions.revoke({ id: free.id });
 }

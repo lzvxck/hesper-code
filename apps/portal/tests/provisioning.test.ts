@@ -36,7 +36,14 @@ const PERIOD_END = new Date("2026-09-04T00:00:00Z");
 
 // Renewing, not winding down, unless a test says otherwise.
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, cancelAtPeriodEnd: false, currentPeriodEnd: PERIOD_END, ...overrides };
+  return {
+    id,
+    productId,
+    amount: productId === "prod_free" ? 0 : 2000,
+    cancelAtPeriodEnd: false,
+    currentPeriodEnd: PERIOD_END,
+    ...overrides,
+  };
 }
 
 function polarError(statusCode: number) {
@@ -161,13 +168,11 @@ describe("ensureProvisioned", () => {
   });
 
   /*
-   * A paying customer keeps both subscriptions and that is now deliberate. Revoking the
-   * free one made Polar emit subscription.revoked for the free product, which the webhook
-   * wrote as plan="free", status="revoked" over a customer paying for Max — the row is one
-   * per customer, so the last event in wins. Selection is by product, so the spare
-   * subscription is inert.
+   * Reading is read-only. Whatever it finds, this function's job on an account that already
+   * has a paid subscription is to report it and write nothing — the revoke that clears Free
+   * belongs to the checkout, where it is a required step, not to a page render.
    */
-  test("leaves the free subscription in place when a paid one exists", async () => {
+  test("reports a paid subscription without writing anything", async () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([
       { activeSubscriptions: [sub("sub_free", "prod_free"), sub("sub_paid", "prod_pro")] },
@@ -175,6 +180,26 @@ describe("ensureProvisioned", () => {
 
     expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("pro");
     expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
+  });
+
+  /*
+   * The path back to Free, and the repair for both ways a customer ends up with nothing: a
+   * paid subscription that lapsed after a downgrade, and an abandoned checkout that had
+   * already revoked Free to make room for itself.
+   */
+  test("re-creates Free for a customer who exists but holds no subscription", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar([{ activeSubscriptions: [] }]);
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
+      plan: "free",
+      endsAt: null,
+    });
+    expect(calls.map((call) => call.method)).toEqual([
+      "customers.getStateExternal",
+      "subscriptions.create",
+    ]);
+    expect(calls[1]?.args).toEqual({ productId: "prod_free", externalCustomerId: USER.userId });
   });
 
   /*

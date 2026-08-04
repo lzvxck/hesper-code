@@ -18,7 +18,14 @@ const PERIOD_END = new Date("2026-09-04T00:00:00Z");
 
 // Renewing, not winding down, unless a test says otherwise.
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, cancelAtPeriodEnd: false, currentPeriodEnd: PERIOD_END, ...overrides };
+  return {
+    id,
+    productId,
+    amount: productId === "prod_free" ? 0 : 2000,
+    cancelAtPeriodEnd: false,
+    currentPeriodEnd: PERIOD_END,
+    ...overrides,
+  };
 }
 
 function fakePolar(
@@ -71,6 +78,65 @@ describe("createCheckout", () => {
         successUrl: `${ORIGIN}/`,
       },
     });
+  });
+
+  /*
+   * The ordering a live checkout forced. Polar permits one active subscription per customer
+   * and refuses the Subscribe step with "You already have an active subscription" while the
+   * free one is live, so the revoke has to land before the checkout is created — the reverse
+   * of every other irreversible step here, and the reason the order is asserted rather than
+   * just the presence of both calls.
+   */
+  test("revokes the free subscription before creating the checkout", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_free", "prod_free")]);
+
+    await createCheckout(deps(polar), "pro");
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "customers.getStateExternal",
+      "subscriptions.revoke",
+      "checkouts.create",
+    ]);
+    expect(calls[1]?.args).toEqual({ id: "sub_free" });
+  });
+
+  test("creates the checkout without a revoke when the customer holds nothing", async () => {
+    const { client: polar, calls } = fakePolar([]);
+
+    await createCheckout(deps(polar), "pro");
+
+    expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal", "checkouts.create"]);
+  });
+
+  /*
+   * The backstop for POLAR_PRODUCT_FREE pointed at a paid product. Nothing may cancel a
+   * subscription somebody is paying for in order to sell them another one.
+   */
+  test("never revokes a subscription that costs money, whatever the config calls free", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
+
+    await createCheckout(deps(polar), "pro");
+
+    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+  });
+
+  // A failed revoke means Polar will refuse the Subscribe step, so handing back a checkout
+  // URL would send the customer to a page that cannot work.
+  test("propagates a failed revoke rather than returning a checkout Polar will refuse", async () => {
+    const calls: string[] = [];
+    const polar = {
+      customers: {
+        getStateExternal: () =>
+          Promise.resolve({ activeSubscriptions: [sub("sub_free", "prod_free")] }),
+      },
+      subscriptions: {
+        revoke: () => Promise.reject(new Error("polar responded 500")),
+      },
+      checkouts: { create: () => Promise.resolve(void calls.push("checkouts.create")) },
+    } as unknown as Polar;
+
+    await expect(createCheckout(deps(polar), "pro")).rejects.toThrow("polar responded 500");
+    expect(calls).toEqual([]);
   });
 
   /*
@@ -142,9 +208,14 @@ describe("changePlan", () => {
     });
   });
 
-  // Polar does not order activeSubscriptions, and the free subscription outlives the
-  // checkout that superseded it, so [0] here could be either one.
-  test("updates the paid subscription even when the free one is listed first", async () => {
+  /*
+   * A contract test for the selection, not a claim about Polar: activeSubscriptions is a
+   * list of unspecified order, and the paid entry is found by product rather than by index.
+   * Polar in fact permits only one active subscription per customer, so this two-entry input
+   * is not a state that occurs — which is exactly why the selection must not depend on the
+   * order it happens to arrive in.
+   */
+  test("updates the paid subscription whatever position it holds in the list", async () => {
     const { client: polar, calls } = fakePolar([
       sub("sub_free", "prod_free"),
       sub("sub_paid", "prod_pro"),
@@ -243,15 +314,15 @@ describe("changePlan", () => {
 
   /*
    * Down to Free is a cancellation at the end of the paid period — never a revoke, which
-   * would end it immediately and take away access the customer already paid for. They land
-   * on Free without a new subscription because the free one has been running underneath the
-   * paid one the whole time.
+   * would end it immediately and take away access the customer already paid for. Moving the
+   * product to the free one is not an option either: that call returns 200 and silently
+   * changes nothing.
+   *
+   * The customer is left with no subscription once it lapses; ensureProvisioned creates Free
+   * again on their next visit, which is covered in provisioning.test.ts.
    */
   test("ends the paid subscription at the period end when the target is free", async () => {
-    const { client: polar, calls } = fakePolar([
-      sub("sub_free", "prod_free"),
-      sub("sub_paid", "prod_max"),
-    ]);
+    const { client: polar, calls } = fakePolar([sub("sub_paid", "prod_max")]);
 
     const response = await changePlan(deps(polar), "free");
 
@@ -263,11 +334,8 @@ describe("changePlan", () => {
     expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
   });
 
-  test("leaves the free subscription untouched when downgrading to free", async () => {
-    const { client: polar, calls } = fakePolar([
-      sub("sub_free", "prod_free"),
-      sub("sub_paid", "prod_max"),
-    ]);
+  test("issues exactly one update when downgrading to free", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_paid", "prod_max")]);
 
     await changePlan(deps(polar), "free");
 
