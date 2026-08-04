@@ -1,6 +1,6 @@
 import { ArrowRight, Blocks, FileCode, History, Key, Layers, ShieldCheck } from "lucide-react";
 
-import { Button, GitHubMark, Reveal, SiteNav } from "@seri/ui";
+import { Button, GitHubMark, Reveal, SiteFooter, SiteNav } from "@seri/ui";
 
 import { InstallTabs } from "@/components/InstallTabs";
 
@@ -287,15 +287,7 @@ export default function Home() {
         </section>
       </main>
 
-      <footer className="border-t border-ink-hairline">
-        <div className="mx-auto flex max-w-[1080px] flex-col gap-8 px-11 py-16 md:flex-row md:items-center md:justify-between md:px-16">
-          <span className="font-mono text-mono font-bold tracking-[-0.4px]">seri</span>
-          <a href={REPO_URL} target="_blank" rel="noreferrer" className="flex items-center gap-4 text-ink-subtle hover:text-ink">
-            <GitHubMark />
-            lzvxck/seri-agent
-          </a>
-        </div>
-      </footer>
+      <SiteFooter wordmark="seri" repoUrl={REPO_URL} />
     </>
   );
 }

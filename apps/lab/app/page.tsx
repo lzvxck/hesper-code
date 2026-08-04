@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
 
-import { Button, GitHubMark, Reveal, SiteNav } from "@seri/ui";
+import { Button, Reveal, SiteFooter, SiteNav } from "@seri/ui";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
 const AGENT_URL = "https://seri-agent.seriora.ai";
@@ -118,20 +118,7 @@ export default function Home() {
         </section>
       </main>
 
-      <footer className="border-t border-ink-hairline">
-        <div className="mx-auto flex max-w-[1080px] flex-col gap-8 px-11 py-16 md:flex-row md:items-center md:justify-between md:px-16">
-          <span className="font-mono text-mono font-bold tracking-[-0.4px]">Seriora Research</span>
-          <a
-            href={REPO_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-4 text-ink-subtle hover:text-ink"
-          >
-            <GitHubMark />
-            lzvxck/seri-agent
-          </a>
-        </div>
-      </footer>
+      <SiteFooter wordmark="Seriora Research" repoUrl={REPO_URL} />
     </>
   );
 }
