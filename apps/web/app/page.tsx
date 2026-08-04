@@ -287,7 +287,11 @@ export default function Home() {
         </section>
       </main>
 
-      <SiteFooter wordmark="seri" repoUrl={REPO_URL} />
+      <SiteFooter
+        wordmark="seri"
+        repoUrl={REPO_URL}
+        builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
+      />
     </>
   );
 }

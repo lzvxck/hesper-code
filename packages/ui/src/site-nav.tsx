@@ -1,5 +1,6 @@
 import { Button } from "./button";
 import { GitHubMark } from "./github-mark";
+import { SerioraMark } from "./seriora-mark";
 
 /*
  * The wordmark links to `#top`, so the page that renders this must carry that id.
@@ -18,7 +19,8 @@ export function SiteNav({
   return (
     <header className="sticky top-0 z-50 border-b border-ink-hairline bg-canvas/85 backdrop-blur-md">
       <div className="mx-auto flex max-w-[1080px] items-center justify-between px-11 py-8 md:px-16">
-        <a href="#top" className="font-mono text-mono font-bold tracking-[-0.4px]">
+        <a href="#top" className="inline-flex items-center gap-3 font-mono text-mono font-bold tracking-[-0.4px]">
+          <SerioraMark />
           {wordmark}
         </a>
         <nav className="flex items-center gap-4">
