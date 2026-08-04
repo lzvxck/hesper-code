@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { cn } from "@/lib/utils";
+import { cn } from "./utils";
 
 /*
  * Staggered scroll reveal — section 6 calls for fade-in on scroll using the 200–800ms

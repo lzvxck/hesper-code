@@ -2,7 +2,7 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 
-import { cn } from "@/lib/utils";
+import { cn } from "./utils";
 
 /*
  * Sizes are expressed in the doc's 2px spacing base, so `22` is 44px — the WCAG 2.1 AAA

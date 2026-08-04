@@ -1,0 +1,162 @@
+/*
+ * Design tokens — transcribed from docs-tmp/anthropic-DESIGN.md frontmatter.
+ * These values are the spec, not preferences.
+ */
+:root {
+  /* Color — section 2. Primary, surface, border and text are all the same near-black. */
+  --ink: #141413;
+  --canvas: #faf9f5;
+  --on-ink: #ffffff;
+
+  /*
+   * Added: the spec's `text-muted` (#faf9f5) is the inverse of the background, so it only
+   * reads on dark surfaces. Section 2 states secondary messaging comes from "opacity
+   * shifts" rather than accent colors — so subtle tones are the ink at reduced alpha.
+   */
+  --ink-subtle: rgba(20, 20, 19, 0.64);
+  --ink-hairline: rgba(20, 20, 19, 0.14);
+  --on-ink-subtle: rgba(250, 249, 245, 0.68);
+  --on-ink-hairline: rgba(250, 249, 245, 0.16);
+
+  /* shadcn's token contract, aliased onto the tokens above so its components inherit
+     this design system instead of shipping their own neutral palette. */
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--on-ink);
+  --muted-foreground: var(--ink-subtle);
+  --border: var(--ink);
+  --ring: var(--ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+
+  --color-ink: var(--ink);
+  --color-canvas: var(--canvas);
+  --color-on-ink: var(--on-ink);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-hairline: var(--ink-hairline);
+  --color-on-ink-subtle: var(--on-ink-subtle);
+  --color-on-ink-hairline: var(--on-ink-hairline);
+
+  /* Typography — section 3 */
+  --font-sans: "Anthropic Sans", Arial, sans-serif;
+  /*
+   * The spec's mono fallback is "Arial, sans-serif", which is a measurement artifact —
+   * a proportional fallback would break column alignment in the install commands, which
+   * are this page's primary CTA. Real monospace stack, custom face still preferred.
+   */
+  --font-mono: "Anthropic Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-display: 58px;
+  --text-display--line-height: 1.1;
+  --text-display--font-weight: 700;
+  --text-body: 12px;
+  --text-body--line-height: 1.4;
+  --text-body--letter-spacing: -0.24px;
+  --text-mono: 16px;
+  --text-mono--line-height: 1.4;
+
+  /*
+   * Spacing — section 5 sets a 2px base unit, so every Tailwind step lands on the doc's
+   * grid. The doc's scale [2,4,8,12,16,22,58,68] maps to steps 1,2,4,6,8,11,29,34.
+   */
+  --spacing: 2px;
+
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+
+  /* Shadows — whisper-soft, per section 4. `card` and `elevated` are identical in spec. */
+  --shadow-card: rgba(0, 0, 0, 0.01) 0px 2px 2px 0px, rgba(0, 0, 0, 0.02) 0px 4px 4px 0px,
+    rgba(0, 0, 0, 0.04) 0px 16px 24px 0px;
+  --shadow-elevated: rgba(0, 0, 0, 0.01) 0px 2px 2px 0px, rgba(0, 0, 0, 0.02) 0px 4px 4px 0px,
+    rgba(0, 0, 0, 0.04) 0px 16px 24px 0px;
+
+  /* Motion — section 6 */
+  --ease-brand: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Single breakpoint at 768px — the doc's two-tier responsive strategy. */
+  --breakpoint-md: 768px;
+}
+
+@layer base {
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.4;
+    letter-spacing: -0.24px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /*
+   * Accessibility — a visible 2px ring in the primary color at 2px offset. On dark
+   * surfaces it inverts so it never disappears against a #141413 fill.
+   */
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  [data-surface="ink"] :focus-visible {
+    outline-color: var(--on-ink);
+  }
+
+  ::selection {
+    background: var(--ink);
+    color: var(--on-ink);
+  }
+}
+
+/*
+ * Scroll reveal — the resting state is the *revealed* one, so content stays visible if
+ * JS never runs. Reveal.tsx opts elements into the hidden state on mount.
+ */
+@layer utilities {
+  [data-reveal="pending"] {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  [data-reveal="shown"] {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 800ms var(--ease-brand),
+      transform 800ms var(--ease-brand);
+    transition-delay: var(--reveal-delay, 0ms);
+  }
+}
+
+/* Section 6 + accessibility: reduced motion collapses to near-instant, no transforms. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 100ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  [data-reveal="pending"] {
+    opacity: 1;
+    transform: none;
+  }
+
+  [data-reveal="shown"] {
+    transition: none;
+    transition-delay: 0ms;
+  }
+}
