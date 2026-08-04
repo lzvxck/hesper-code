@@ -4,6 +4,7 @@ import { type Plan, type ProductEnv, productIdForPlan } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAccountStatus } from "./accountStatus";
 import { getCustomerState } from "./polar";
+import { claimProvisioning, completeProvisioning, releaseProvisioning } from "./provisioningClaim";
 import type { SessionUser } from "./session";
 import { holdsOnlyFree, paidSubscription } from "./subscriptions";
 
@@ -34,19 +35,22 @@ async function ensureCustomer(polar: Polar, user: SessionUser): Promise<Customer
 }
 
 /*
- * The same recovery as ensureCustomer, one step later, and the predicate differs on
- * purpose: there a customer either exists or does not, whereas here Polar has no
- * "subscription for this product" lookup, so the question that can actually be asked is
- * whether the customer now holds any active subscription at all. That is sound because
- * this only runs when the check above found none.
+ * This used to recover from a duplicate by re-reading Polar, on the assumption that Polar
+ * rejects a second identical subscription. It does not — asked seventeen times it creates
+ * seventeen — so there was never an error to catch and the recovery was inert. The barrier
+ * is the provisioning_claims row instead, and it is taken before this runs.
+ *
+ * A failure hands the claim back so the next render retries at once, then propagates: with
+ * only one caller ever reaching here, an error is a real error.
  */
-async function ensureFreeSubscription(polar: Polar, userId: string, freeProductId: string): Promise<void> {
+async function createFreeSubscription(deps: ProvisioningDeps, userId: string, freeProductId: string) {
   try {
-    await polar.subscriptions.create({ productId: freeProductId, externalCustomerId: userId });
+    await deps.polar.subscriptions.create({ productId: freeProductId, externalCustomerId: userId });
   } catch (error) {
-    const raced = await getCustomerState(polar, userId);
-    if (!raced?.activeSubscriptions.length) throw error;
+    await releaseProvisioning(deps.supabase, userId);
+    throw error;
   }
+  await completeProvisioning(deps.supabase, userId);
 }
 
 /**
@@ -117,8 +121,28 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
    * underneath; and one who abandoned a checkout after the free subscription was revoked to
    * make room for it. The last two are why this must stay reachable — it is the only path
    * back to Free.
+   *
+   * And it is reached concurrently. One navigation fans out into parallel renders that all
+   * get this far before any subscription exists, so the claim — not the read above — is what
+   * makes creation happen once.
    */
-  await ensureFreeSubscription(deps.polar, user.userId, freeProductId);
+  if (!(await claimProvisioning(deps.supabase, user.userId))) {
+    /*
+     * Another render holds the claim and is creating the subscription right now. Look once
+     * more in case it has already landed; otherwise report Free without creating anything.
+     * That is honest rather than optimistic: the winner's subscription is moments away, and
+     * reporting it early costs nothing that the next render does not correct.
+     */
+    const raced = await getCustomerState(deps.polar, user.userId);
+    const racedPaid = paidSubscription(raced?.activeSubscriptions ?? [], deps.products);
+    if (racedPaid) {
+      const { cancelAtPeriodEnd, currentPeriodEnd } = racedPaid.subscription;
+      return { plan: racedPaid.plan, endsAt: cancelAtPeriodEnd ? currentPeriodEnd : null };
+    }
+    return { plan: "free", endsAt: null };
+  }
+
+  await createFreeSubscription(deps, user.userId, freeProductId);
 
   // Returned rather than re-read: the webhook that writes the row has not necessarily
   // arrived yet, and only later visits depend on it.

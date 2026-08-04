@@ -13,21 +13,79 @@ const PRODUCTS = {
 
 const USER = { userId: "user_01H", email: "someone@seriora.ai" };
 
-function fakeSupabase(row: Record<string, unknown> | null) {
+type ClaimRow = { workos_user_id: string; state: string; claimed_at: string };
+type Filter = { column: keyof ClaimRow; op: "eq" | "lt"; value: string };
+
+function matches(row: ClaimRow, filters: Filter[]): boolean {
+  // ISO-8601 UTC sorts lexicographically, which is what makes `lt` on claimed_at work here.
+  return filters.every((f) => (f.op === "eq" ? row[f.column] === f.value : row[f.column] < f.value));
+}
+
+/*
+ * A thenable builder, because PostgREST's is one: `.update(...).eq(...)` is awaited directly
+ * while `.update(...).eq(...).select()` returns rows, and both have to run the mutation
+ * exactly once.
+ */
+function claimQuery(run: (filters: Filter[]) => ClaimRow[]) {
+  const filters: Filter[] = [];
+  const builder = {
+    eq: (column: keyof ClaimRow, value: string) => (filters.push({ column, op: "eq", value }), builder),
+    lt: (column: keyof ClaimRow, value: string) => (filters.push({ column, op: "lt", value }), builder),
+    select: () => Promise.resolve({ data: run(filters), error: null }),
+    then: (resolve: (result: unknown) => void) => resolve({ data: run(filters), error: null }),
+  };
+  return builder;
+}
+
+/*
+ * `claims` is shared across every caller in a test, which is the whole point: the Map stands
+ * in for the primary key, and the check-and-set inside `select()` runs synchronously, so two
+ * concurrent callers cannot both insert — exactly what the unique constraint guarantees.
+ */
+function fakeSupabase(row: Record<string, unknown> | null, claims: Map<string, ClaimRow> = new Map()) {
   const filters: { table: string; column: string; value: unknown }[] = [];
   const client = {
-    from: (table: string) => ({
-      select: () => ({
-        eq: (column: string, value: unknown) => ({
-          maybeSingle: () => {
-            filters.push({ table, column, value });
-            return Promise.resolve({ data: row, error: null });
+    from: (table: string) => {
+      if (table === "account_status") {
+        return {
+          select: () => ({
+            eq: (column: string, value: unknown) => ({
+              maybeSingle: () => {
+                filters.push({ table, column, value });
+                return Promise.resolve({ data: row, error: null });
+              },
+            }),
+          }),
+        };
+      }
+      return {
+        upsert: (values: { workos_user_id: string }, options: { ignoreDuplicates?: boolean }) => ({
+          select: () => {
+            // A plain upsert would overwrite the winner's claim instead of reporting the
+            // conflict, so the fake refuses to model anything but ON CONFLICT DO NOTHING.
+            if (!options?.ignoreDuplicates) throw new Error("claim insert must use ignoreDuplicates");
+            const id = values.workos_user_id;
+            if (claims.has(id)) return Promise.resolve({ data: [], error: null });
+            claims.set(id, { workos_user_id: id, state: "pending", claimed_at: new Date().toISOString() });
+            return Promise.resolve({ data: [{ workos_user_id: id }], error: null });
           },
         }),
-      }),
-    }),
+        update: (patch: Partial<ClaimRow>) =>
+          claimQuery((f) => {
+            const hit = [...claims.values()].filter((r) => matches(r, f));
+            for (const r of hit) claims.set(r.workos_user_id, { ...r, ...patch });
+            return hit;
+          }),
+        delete: () =>
+          claimQuery((f) => {
+            const hit = [...claims.values()].filter((r) => matches(r, f));
+            for (const r of hit) claims.delete(r.workos_user_id);
+            return hit;
+          }),
+      };
+    },
   };
-  return { client: client as unknown as SupabaseClient, filters };
+  return { client: client as unknown as SupabaseClient, filters, claims };
 }
 
 type FakeState = { activeSubscriptions: ActiveSubscription[] } | null;
@@ -264,15 +322,21 @@ describe("ensureProvisioned", () => {
     expect(calls.at(-1)?.method).toBe("subscriptions.create");
   });
 
-  test("treats a duplicate subscription from a concurrent first visit as success", async () => {
-    const { client: supabase } = fakeSupabase(null);
-    const { client: polar, calls } = fakePolar(
-      [null, { activeSubscriptions: [sub("sub_1", "prod_free")] }],
-      "subscriptions.create",
-    );
+  /*
+   * This used to assert that a duplicate subscription error was recovered from. Polar never
+   * raises one — it creates the duplicate — so that recovery was inert and the test was
+   * asserting a code path reality never enters. What a create failure must actually do is
+   * hand the claim back, so the next render retries immediately rather than waiting out the
+   * stale window.
+   */
+  test("releases the claim and propagates when creating the subscription fails", async () => {
+    const { client: supabase, claims } = fakeSupabase(null);
+    const { client: polar } = fakePolar([null, { activeSubscriptions: [] }], "subscriptions.create");
 
-    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
-    expect(calls.filter((call) => call.method === "subscriptions.create")).toHaveLength(1);
+    await expect(ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).rejects.toThrow(
+      "polar responded 409",
+    );
+    expect(claims.size).toBe(0);
   });
 
   // Polar validates email deliverability. That failure looks like the duplicate above, and
@@ -304,5 +368,139 @@ describe("ensureProvisioned", () => {
       "POLAR_PRODUCT_FREE is not set",
     );
     expect(calls).toEqual([]);
+  });
+});
+
+/*
+ * The bug the sequential tests above could not express.
+ *
+ * A single browser navigation in Next dev fans out into parallel renders, and every one of
+ * them ran ensureProvisioned before any subscription existed: 17 Free subscriptions in 3.3
+ * seconds on a real account. Not repeated visits, and not propagation lag — a fresh
+ * subscription is visible to getStateExternal on the very first read. They were simply
+ * concurrent with each other, so every "does Polar already have one?" check truthfully
+ * answered no.
+ *
+ * `getStateExternal` returning empty throughout is the point: it models every render reading
+ * before any of them has written. Only the claim can decide this, which is why the assertion
+ * is on the number of creates rather than on the reported plan.
+ */
+describe("ensureProvisioned under concurrent renders", () => {
+  const RENDERS = 17;
+
+  function fanOutPolar(activeSubscriptions: ActiveSubscription[] = []) {
+    let creates = 0;
+    const client = {
+      customers: {
+        getStateExternal: () => Promise.resolve({ activeSubscriptions }),
+        create: () => Promise.resolve({ id: "cus_1" }),
+      },
+      subscriptions: {
+        create: () => {
+          creates += 1;
+          return Promise.resolve({ id: `sub_${creates}` });
+        },
+      },
+    };
+    return { client: client as unknown as Polar, creates: () => creates };
+  }
+
+  test(`creates exactly one free subscription across ${RENDERS} concurrent renders`, async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, creates } = fanOutPolar();
+
+    const results = await Promise.all(
+      Array.from({ length: RENDERS }, () =>
+        ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER),
+      ),
+    );
+
+    expect(creates()).toBe(1);
+    expect(results).toHaveLength(RENDERS);
+    expect(results.every((r) => r.plan === "free")).toBe(true);
+  });
+
+  // The losers' half of the same guarantee, isolated: a claim already held by someone else
+  // means create nothing and report Free.
+  test("a render that loses the claim creates nothing and still reports free", async () => {
+    const held = new Map([
+      ["user_01H", { workos_user_id: "user_01H", state: "pending", claimed_at: new Date().toISOString() }],
+    ]);
+    const { client: supabase } = fakeSupabase(null, held);
+    const { client: polar, creates } = fanOutPolar();
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
+      plan: "free",
+      endsAt: null,
+    });
+    expect(creates()).toBe(0);
+  });
+
+  // If the winner's subscription has landed by the time a loser re-reads, report it rather
+  // than the assumed free.
+  test("a loser reports what Polar shows if the winner's subscription has already landed", async () => {
+    const held = new Map([
+      ["user_01H", { workos_user_id: "user_01H", state: "pending", claimed_at: new Date().toISOString() }],
+    ]);
+    const { client: supabase } = fakeSupabase(null, held);
+    const { client: polar, creates } = fanOutPolar([sub("sub_paid", "prod_max")]);
+
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("max");
+    expect(creates()).toBe(0);
+  });
+
+  /*
+   * A claimant that died between claiming and creating must not lock the user out forever,
+   * so a pending claim older than the stale window can be taken over.
+   */
+  test("a stale pending claim can be reclaimed", async () => {
+    const stale = new Map([
+      [
+        "user_01H",
+        {
+          workos_user_id: "user_01H",
+          state: "pending",
+          claimed_at: new Date(Date.now() - 120_000).toISOString(),
+        },
+      ],
+    ]);
+    const { client: supabase } = fakeSupabase(null, stale);
+    const { client: polar, creates } = fanOutPolar();
+
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
+    expect(creates()).toBe(1);
+  });
+
+  // The takeover is a conditional UPDATE, so the first reclaimer moves claimed_at forward and
+  // the second no longer matches. Both winning would put us back where we started.
+  test("two concurrent reclaimers of the same stale claim do not both proceed", async () => {
+    const stale = new Map([
+      [
+        "user_01H",
+        {
+          workos_user_id: "user_01H",
+          state: "pending",
+          claimed_at: new Date(Date.now() - 120_000).toISOString(),
+        },
+      ],
+    ]);
+    const { client: supabase } = fakeSupabase(null, stale);
+    const { client: polar, creates } = fanOutPolar();
+
+    await Promise.all([
+      ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER),
+      ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER),
+    ]);
+
+    expect(creates()).toBe(1);
+  });
+
+  test("marks the claim done once the subscription exists", async () => {
+    const { client: supabase, claims } = fakeSupabase(null);
+    const { client: polar } = fanOutPolar();
+
+    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
+
+    expect(claims.get("user_01H")?.state).toBe("done");
   });
 });
