@@ -14,6 +14,8 @@ export default authkitProxy({
   middlewareAuth: { enabled: true, unauthenticatedPaths: [] },
 });
 
+// `callback$` and not `callback`: the bare prefix would also exempt /callbackfoo, which is
+// an ordinary protected route this app happens not to have yet.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|callback).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|callback$).*)"],
 };

@@ -65,13 +65,17 @@ function fakePolar(states: FakeState[], throwOn?: "customers.create" | "subscrip
           ? Promise.reject(polarError(409))
           : Promise.resolve({ id: "sub_1" });
       },
+      revoke: (args: unknown) => {
+        calls.push({ method: "subscriptions.revoke", args });
+        return Promise.resolve({ id: "sub_free" });
+      },
     },
   };
   return { client: client as unknown as Polar, calls };
 }
 
 describe("ensureProvisioned", () => {
-  test("returns the stored plan without touching Polar when the row exists", async () => {
+  test("returns the stored plan without touching Polar when the row is active and mapped", async () => {
     const { client: supabase, filters } = fakeSupabase({ plan: "max", subscription_status: "active" });
     const { client: polar, calls } = fakePolar([]);
 
@@ -80,11 +84,35 @@ describe("ensureProvisioned", () => {
     expect(filters).toEqual([{ table: "account_status", column: "workos_user_id", value: USER.userId }]);
   });
 
-  test("returns null when the stored row is on a product that is not one of the four", async () => {
-    const { client: supabase } = fakeSupabase({ plan: null, subscription_status: "active" });
-    const { client: polar } = fakePolar([]);
+  /*
+   * A churned customer whose row still says "pro" would be shown as a paying customer and
+   * routed at /api/plan, which cannot revive a canceled subscription — Polar answers 403
+   * AlreadyCanceledSubscription. They have to reach checkout, so a non-active row is worth
+   * exactly as much as no row.
+   */
+  test.each(["revoked", "canceled", "past_due"])(
+    "ignores a stored plan whose status is %s and asks Polar instead",
+    async (status) => {
+      const { client: supabase } = fakeSupabase({ plan: "pro", subscription_status: status });
+      const { client: polar, calls } = fakePolar([{ activeSubscriptions: [] }]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBeNull();
+      expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
+      expect(calls.map((call) => call.method)).toEqual([
+        "customers.getStateExternal",
+        "subscriptions.create",
+      ]);
+    },
+  );
+
+  /*
+   * The row a webhook without POLAR_PRODUCT_* configured writes. Believing it would route a
+   * paying customer at /api/checkout and sell them a second subscription.
+   */
+  test("ignores an active row whose plan column is null and asks Polar instead", async () => {
+    const { client: supabase } = fakeSupabase({ plan: null, subscription_status: "active" });
+    const { client: polar } = fakePolar([{ activeSubscriptions: [{ id: "sub_1", productId: "prod_max" }] }]);
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("max");
   });
 
   test("creates nothing when Polar already has the customer and an active subscription", async () => {
@@ -104,6 +132,62 @@ describe("ensureProvisioned", () => {
     const { client: polar } = fakePolar([{ activeSubscriptions: [{ id: "sub_1", productId: "prod_pro" }] }]);
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("pro");
+  });
+
+  /*
+   * Polar allows both subscriptions to be active at once and does not order the array, so
+   * [0] here is whichever one it felt like returning. The paid one is the answer.
+   */
+  test("picks the paid subscription even when the free one is listed first", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar } = fakePolar([
+      {
+        activeSubscriptions: [
+          { id: "sub_free", productId: "prod_free" },
+          { id: "sub_paid", productId: "prod_ultra" },
+        ],
+      },
+    ]);
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("ultra");
+  });
+
+  test("revokes the free subscription a paid one has superseded", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar([
+      {
+        activeSubscriptions: [
+          { id: "sub_free", productId: "prod_free" },
+          { id: "sub_paid", productId: "prod_pro" },
+        ],
+      },
+    ]);
+
+    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
+
+    expect(calls).toContainEqual({ method: "subscriptions.revoke", args: { id: "sub_free" } });
+  });
+
+  test("leaves a lone free subscription alone", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar([
+      { activeSubscriptions: [{ id: "sub_free", productId: "prod_free" }] },
+    ]);
+
+    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
+
+    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+  });
+
+  // Subscribing them to Free on top of a product we cannot identify risks charging twice.
+  test("reports null and writes nothing when the only active product is unrecognized", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar([
+      { activeSubscriptions: [{ id: "sub_x", productId: "prod_from_another_environment" }] },
+    ]);
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBeNull();
+    expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
   });
 
   test("creates the customer and then the free subscription, both keyed on the session userId", async () => {

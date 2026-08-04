@@ -7,5 +7,8 @@ import { getSessionUser } from "@/lib/session";
 export async function POST(request: Request): Promise<Response> {
   const { userId } = await getSessionUser();
   const form = await request.formData();
-  return changePlan({ polar: getPolarClient(), products: process.env, userId }, form.get("plan"));
+  return changePlan(
+    { polar: getPolarClient(), products: process.env, userId, origin: new URL(request.url).origin },
+    form.get("plan"),
+  );
 }

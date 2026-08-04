@@ -1,9 +1,13 @@
 export const PLANS = ["free", "pro", "max", "ultra"] as const;
 export type Plan = (typeof PLANS)[number];
 
-// The plans a request may ask for. "free" is absent on purpose: it is provisioned by API on
-// first login and never bought, and going back to it is a cancellation, which belongs to
-// Polar's customer portal.
+/*
+ * The plans a request may ask for. "free" is absent on purpose: it is provisioned by API on
+ * first login and never bought, and going back to it is a cancellation, which belongs to
+ * Polar's customer portal.
+ *
+ * Ascending price order, which is what makes an upgrade and a downgrade distinguishable.
+ */
 export const PAID_PLANS = ["pro", "max", "ultra"] as const;
 export type PaidPlan = (typeof PAID_PLANS)[number];
 
@@ -35,4 +39,31 @@ export function productIdForPlan(plan: Plan, env: ProductEnv): string | null {
 
 export function planForProductId(productId: string, env: ProductEnv): Plan | null {
   return PLANS.find((plan) => env[PRODUCT_ENV_VAR[plan]] === productId) ?? null;
+}
+
+export function isUpgrade(from: PaidPlan, to: PaidPlan): boolean {
+  return PAID_PLANS.indexOf(to) > PAID_PLANS.indexOf(from);
+}
+
+export type ActiveSubscription = { id: string; productId: string };
+
+/*
+ * Polar allows one customer to hold several active subscriptions at once, does not specify
+ * the order of `activeSubscriptions`, and does not cancel the API-created Free subscription
+ * when a paid checkout completes. So the account's real plan is the paid subscription if
+ * there is one — picking [0] would be a coin flip between Free and Pro.
+ */
+export function paidSubscription<T extends ActiveSubscription>(
+  subscriptions: T[],
+  env: ProductEnv,
+): { subscription: T; plan: PaidPlan } | null {
+  for (const subscription of subscriptions) {
+    const plan = planForProductId(subscription.productId, env);
+    if (isPaidPlan(plan)) return { subscription, plan };
+  }
+  return null;
+}
+
+export function freeSubscription<T extends ActiveSubscription>(subscriptions: T[], env: ProductEnv): T | null {
+  return subscriptions.find((s) => planForProductId(s.productId, env) === "free") ?? null;
 }

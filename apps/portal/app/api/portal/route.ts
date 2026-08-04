@@ -1,4 +1,5 @@
 import { CustomerPortal } from "@polar-sh/nextjs";
+import type { NextRequest } from "next/server";
 import { polarServer } from "@/lib/polar";
 import { getSessionUser } from "@/lib/session";
 
@@ -7,10 +8,20 @@ import { getSessionUser } from "@/lib/session";
  * none of it is rebuilt here — self-service cancellation is a legal requirement in some
  * jurisdictions, which is not a thing to reimplement.
  *
- * The customer is resolved from the session, never from the request.
+ * Exported so a test can prove the thing that matters: the customer comes from the session,
+ * and the request is not consulted at all.
  */
-export const GET = CustomerPortal({
-  accessToken: process.env.POLAR_ACCESS_TOKEN!,
-  server: polarServer(),
-  getExternalCustomerId: async () => (await getSessionUser()).userId,
-});
+export async function getExternalCustomerId(): Promise<string> {
+  return (await getSessionUser()).userId;
+}
+
+// Built per request rather than once at module load, so returnUrl can be this deployment's
+// own origin and the customer has a way back from Polar.
+export async function GET(request: NextRequest): Promise<Response> {
+  return CustomerPortal({
+    accessToken: process.env.POLAR_ACCESS_TOKEN!,
+    server: polarServer(),
+    returnUrl: new URL("/", request.url).toString(),
+    getExternalCustomerId,
+  })(request);
+}
