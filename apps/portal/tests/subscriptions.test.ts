@@ -8,8 +8,10 @@ const PRODUCTS = {
   POLAR_PRODUCT_ULTRA: "prod_ultra",
 };
 
+const PERIOD_END = new Date("2026-09-04T00:00:00Z");
+
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, cancelAtPeriodEnd: false, ...overrides };
+  return { id, productId, cancelAtPeriodEnd: false, currentPeriodEnd: PERIOD_END, ...overrides };
 }
 
 /*

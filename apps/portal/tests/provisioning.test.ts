@@ -32,9 +32,11 @@ function fakeSupabase(row: Record<string, unknown> | null) {
 
 type FakeState = { activeSubscriptions: ActiveSubscription[] } | null;
 
-// Free costs nothing and is not winding down, unless a test says otherwise.
+const PERIOD_END = new Date("2026-09-04T00:00:00Z");
+
+// Renewing, not winding down, unless a test says otherwise.
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, cancelAtPeriodEnd: false, ...overrides };
+  return { id, productId, cancelAtPeriodEnd: false, currentPeriodEnd: PERIOD_END, ...overrides };
 }
 
 function polarError(statusCode: number) {
@@ -85,7 +87,7 @@ describe("ensureProvisioned", () => {
     const { client: supabase, filters } = fakeSupabase({ plan: "max", subscription_status: "active" });
     const { client: polar, calls } = fakePolar([]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("max");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("max");
     expect(calls).toEqual([]);
     expect(filters).toEqual([{ table: "account_status", column: "workos_user_id", value: USER.userId }]);
   });
@@ -102,7 +104,7 @@ describe("ensureProvisioned", () => {
       const { client: supabase } = fakeSupabase({ plan: "pro", subscription_status: status });
       const { client: polar, calls } = fakePolar([{ activeSubscriptions: [] }]);
 
-      expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
+      expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
       expect(calls.map((call) => call.method)).toEqual([
         "customers.getStateExternal",
         "subscriptions.create",
@@ -118,7 +120,7 @@ describe("ensureProvisioned", () => {
     const { client: supabase } = fakeSupabase({ plan: null, subscription_status: "active" });
     const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_1", "prod_max")] }]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("max");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("max");
   });
 
   test("creates nothing when Polar already has the customer and an active subscription", async () => {
@@ -127,7 +129,7 @@ describe("ensureProvisioned", () => {
       { activeSubscriptions: [sub("sub_1", "prod_free")] },
     ]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
     expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
   });
 
@@ -137,7 +139,7 @@ describe("ensureProvisioned", () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_1", "prod_pro")] }]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("pro");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("pro");
   });
 
   /*
@@ -155,7 +157,7 @@ describe("ensureProvisioned", () => {
       },
     ]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("ultra");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("ultra");
   });
 
   /*
@@ -171,8 +173,36 @@ describe("ensureProvisioned", () => {
       { activeSubscriptions: [sub("sub_free", "prod_free"), sub("sub_paid", "prod_pro")] },
     ]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("pro");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("pro");
     expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
+  });
+
+  /*
+   * The date the page needs to say "Pro until 4 September, then Free." Polar keeps a
+   * scheduled-to-cancel subscription in activeSubscriptions, so without reading
+   * cancelAtPeriodEnd the account looks like an ordinary paying one and the notice never
+   * appears.
+   */
+  test("reports the end date when the paid subscription is scheduled to cancel", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar } = fakePolar([
+      { activeSubscriptions: [sub("sub_paid", "prod_pro", { cancelAtPeriodEnd: true })] },
+    ]);
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
+      plan: "pro",
+      endsAt: PERIOD_END,
+    });
+  });
+
+  test("reports no end date for a subscription that is simply renewing", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_paid", "prod_pro")] }]);
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
+      plan: "pro",
+      endsAt: null,
+    });
   });
 
   // Subscribing them to Free on top of a product we cannot identify risks charging twice.
@@ -182,7 +212,7 @@ describe("ensureProvisioned", () => {
       { activeSubscriptions: [sub("sub_x", "prod_from_another_environment")] },
     ]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBeNull();
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBeNull();
     expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
   });
 
@@ -190,7 +220,7 @@ describe("ensureProvisioned", () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([null]);
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
     expect(calls.map((call) => call.method)).toEqual([
       "customers.getStateExternal",
       "customers.create",
@@ -204,7 +234,7 @@ describe("ensureProvisioned", () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([null, { activeSubscriptions: [] }], "customers.create");
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
     expect(calls.filter((call) => call.method === "customers.create")).toHaveLength(1);
     expect(calls.at(-1)?.method).toBe("subscriptions.create");
   });
@@ -216,7 +246,7 @@ describe("ensureProvisioned", () => {
       "subscriptions.create",
     );
 
-    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("free");
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("free");
     expect(calls.filter((call) => call.method === "subscriptions.create")).toHaveLength(1);
   });
 

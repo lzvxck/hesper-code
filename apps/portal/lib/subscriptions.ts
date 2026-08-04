@@ -8,6 +8,7 @@ export type ActiveSubscription = {
   id: string;
   productId: string;
   cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: Date;
 };
 
 /*

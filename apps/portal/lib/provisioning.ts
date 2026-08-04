@@ -50,13 +50,20 @@ async function ensureFreeSubscription(polar: Polar, userId: string, freeProductI
 }
 
 /**
+ * What the page needs to render an account.
+ *
+ * `plan` is null when Polar shows the account holding only products that are not among the
+ * four configured ones — the one case where we genuinely cannot say what they are on.
+ * `endsAt` is set only while a paid subscription is scheduled to cancel, and is the date
+ * access actually stops.
+ */
+export type AccountPlan = { plan: Plan | null; endsAt: Date | null };
+
+/**
  * Establishes a Polar customer and a Free subscription for a session, and reports the plan
  * that is now in force.
- *
- * Returns null when Polar shows the account holding only products that are not among the
- * four configured ones — the one case where we genuinely cannot say what they are on.
  */
-export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUser): Promise<Plan | null> {
+export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUser): Promise<AccountPlan> {
   /*
    * Fast path: in steady state a page load reaches Supabase and stops there. All three
    * conditions are load-bearing. A revoked or past_due row would otherwise report the plan
@@ -65,9 +72,13 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
    * `plan` is null says nothing at all; a deployment whose webhook predates that column
    * writes exactly that, and believing it would send a paying customer to checkout for a
    * second subscription.
+   *
+   * A scheduled cancellation cannot hide behind this path: the webhook writes "canceled" the
+   * moment one is scheduled, so such an account always falls through to Polar, which is the
+   * only place the end date exists.
    */
   const row = await readAccountStatus(deps.supabase, user.userId);
-  if (row?.status === "active" && row.plan) return row.plan;
+  if (row?.status === "active" && row.plan) return { plan: row.plan, endsAt: null };
 
   const freeProductId = productIdForPlan("free", deps.products);
   if (!freeProductId) throw new Error("POLAR_PRODUCT_FREE is not set");
@@ -87,16 +98,21 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
    * the webhook refuses to let its events overwrite an active paid row.
    */
   const paid = paidSubscription(subscriptions, deps.products);
-  if (paid) return paid.plan;
+  if (paid) {
+    const { cancelAtPeriodEnd, currentPeriodEnd } = paid.subscription;
+    return { plan: paid.plan, endsAt: cancelAtPeriodEnd ? currentPeriodEnd : null };
+  }
 
   // Active, but not on something we can fully account for. Adding a Free subscription on
   // top of a product we cannot identify risks charging twice, so report the uncertainty
   // rather than write — the same predicate createCheckout refuses on.
-  if (subscriptions.length > 0) return holdsOnlyFree(subscriptions, deps.products) ? "free" : null;
+  if (subscriptions.length > 0) {
+    return { plan: holdsOnlyFree(subscriptions, deps.products) ? "free" : null, endsAt: null };
+  }
 
   await ensureFreeSubscription(deps.polar, user.userId, freeProductId);
 
   // Returned rather than re-read: the webhook that writes the row has not necessarily
   // arrived yet, and only later visits depend on it.
-  return "free";
+  return { plan: "free", endsAt: null };
 }

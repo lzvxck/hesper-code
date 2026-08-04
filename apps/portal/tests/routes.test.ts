@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Polar } from "@polar-sh/sdk";
-import { changePlan, createCheckout } from "../lib/billing";
+import { changePlan, createCheckout, resumePaidPlan } from "../lib/billing";
 import type { ActiveSubscription } from "../lib/subscriptions";
 
 const PRODUCTS = {
@@ -14,9 +14,11 @@ const SESSION_USER_ID = "user_session";
 const VICTIM_USER_ID = "user_victim";
 const ORIGIN = "https://portal.seriora.ai";
 
-// Free costs nothing and is not winding down, unless a test says otherwise.
+const PERIOD_END = new Date("2026-09-04T00:00:00Z");
+
+// Renewing, not winding down, unless a test says otherwise.
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, cancelAtPeriodEnd: false, ...overrides };
+  return { id, productId, cancelAtPeriodEnd: false, currentPeriodEnd: PERIOD_END, ...overrides };
 }
 
 function fakePolar(
@@ -161,10 +163,9 @@ describe("changePlan", () => {
 
   /*
    * Polar keeps a scheduled-to-cancel subscription in activeSubscriptions while our own row
-   * already reads "canceled", so the page happily says "You're on pro". Both routes used to
-   * refuse it with contradictory advice — "start a new one" from one, "change it under
-   * Manage billing" from the other — and neither was possible. cancelAtPeriodEnd is how it
-   * is told apart, and resuming in Polar's portal is the only real remedy.
+   * already reads "canceled". Both routes refuse it, and both now point at /api/resume: the
+   * previous copy sent the customer to Manage billing, which was tried against the real
+   * customer portal and offers no such control.
    */
   test("refuses a scheduled-to-cancel subscription before Polar has to, and says to resume it", async () => {
     const { client: polar, calls } = fakePolar([
@@ -174,11 +175,11 @@ describe("changePlan", () => {
     const response = await changePlan(deps(polar), "max");
 
     expect(response.status).toBe(409);
-    expect(await response.text()).toContain("Resume it under Manage billing");
+    expect(await response.text()).toBe("This plan is scheduled to end. Resume it first, then change plan.");
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
   });
 
-  test("gives the checkout route the same answer for the same account", async () => {
+  test("gives the checkout route the same remedy for the same account", async () => {
     const { client: polar, calls } = fakePolar([
       sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true }),
     ]);
@@ -186,8 +187,18 @@ describe("changePlan", () => {
     const response = await createCheckout(deps(polar), "max");
 
     expect(response.status).toBe(409);
-    expect(await response.text()).toContain("Resume it under Manage billing");
+    expect(await response.text()).toContain("Resume it");
     expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
+  });
+
+  // No message anywhere may send the customer to a control Polar's portal does not have.
+  test.each([
+    async (polar: Polar) => changePlan(deps(polar), "max"),
+    async (polar: Polar) => createCheckout(deps(polar), "max"),
+  ])("refusal %# never tells the customer to resume under Manage billing", async (call) => {
+    const { client: polar } = fakePolar([sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true })]);
+
+    expect(await (await call(polar)).text()).not.toContain("Manage billing");
   });
 
   // Measured against the sandbox: canceled, or merely scheduled to cancel, both answer 403
@@ -223,11 +234,86 @@ describe("changePlan", () => {
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
   });
 
-  test("rejects a plan label that is not one of the paid three", async () => {
+  test.each(["enterprise", "", null, { plan: "pro" }])("rejects the unknown plan label %p", async (plan) => {
     const { client: polar, calls } = fakePolar([sub("sub_session", "prod_pro")]);
 
-    expect((await changePlan(deps(polar), "free")).status).toBe(400);
+    expect((await changePlan(deps(polar), plan)).status).toBe(400);
     expect(calls).toEqual([]);
+  });
+
+  /*
+   * Down to Free is a cancellation at the end of the paid period — never a revoke, which
+   * would end it immediately and take away access the customer already paid for. They land
+   * on Free without a new subscription because the free one has been running underneath the
+   * paid one the whole time.
+   */
+  test("ends the paid subscription at the period end when the target is free", async () => {
+    const { client: polar, calls } = fakePolar([
+      sub("sub_free", "prod_free"),
+      sub("sub_paid", "prod_max"),
+    ]);
+
+    const response = await changePlan(deps(polar), "free");
+
+    expect(response.status).toBe(303);
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_paid", subscriptionUpdate: { cancelAtPeriodEnd: true } },
+    });
+    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+  });
+
+  test("leaves the free subscription untouched when downgrading to free", async () => {
+    const { client: polar, calls } = fakePolar([
+      sub("sub_free", "prod_free"),
+      sub("sub_paid", "prod_max"),
+    ]);
+
+    await changePlan(deps(polar), "free");
+
+    expect(calls.filter((call) => call.method === "subscriptions.update")).toHaveLength(1);
+  });
+});
+
+/*
+ * Resuming is a real API call — PATCH with cancel_at_period_end false, measured returning
+ * 200 — which is why the portal owns it rather than deferring to a control Polar's customer
+ * portal does not expose.
+ */
+describe("resumePaidPlan", () => {
+  test("clears the scheduled cancellation on the session's paid subscription", async () => {
+    const { client: polar, calls } = fakePolar([
+      sub("sub_free", "prod_free"),
+      sub("sub_paid", "prod_pro", { cancelAtPeriodEnd: true }),
+    ]);
+
+    const response = await resumePaidPlan(deps(polar));
+
+    expect(response.status).toBe(303);
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_paid", subscriptionUpdate: { cancelAtPeriodEnd: false } },
+    });
+  });
+
+  test("returns 409 when there is no paid subscription to resume", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_free", "prod_free")]);
+
+    expect((await resumePaidPlan(deps(polar))).status).toBe(409);
+    expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
+  });
+
+  test("answers 409 rather than a 500 when Polar says the subscription already ended", async () => {
+    const alreadyEnded = Object.assign(new Error("AlreadyCanceledSubscription"), { statusCode: 403 });
+    const { client: polar } = fakePolar(
+      [sub("sub_paid", "prod_pro", { cancelAtPeriodEnd: true })],
+      alreadyEnded,
+    );
+
+    const response = await resumePaidPlan(deps(polar));
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).not.toContain("Manage billing");
   });
 });
 
@@ -254,6 +340,7 @@ describe("route handlers", () => {
   let sessionSubscriptions: ActiveSubscription[] = [];
   let checkoutRoute: typeof import("../app/api/checkout/route");
   let planRoute: typeof import("../app/api/plan/route");
+  let resumeRoute: typeof import("../app/api/resume/route");
   const originalProducts = { ...PRODUCTS };
 
   // A request that names somebody else's account in every place one could be smuggled.
@@ -299,6 +386,7 @@ describe("route handlers", () => {
 
     checkoutRoute = await import("../app/api/checkout/route");
     planRoute = await import("../app/api/plan/route");
+    resumeRoute = await import("../app/api/resume/route");
   });
 
   afterAll(() => {
@@ -359,6 +447,61 @@ describe("route handlers", () => {
     });
     expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
     expect(JSON.stringify(polarCalls)).not.toContain("sub_victim");
+  });
+
+  test("POST /api/plan ends the session's own subscription when the body asks for free", async () => {
+    sessionSubscriptions = [sub("sub_free", "prod_free"), sub("sub_session", "prod_pro")];
+
+    const response = await planRoute.POST(hostileRequest("free"));
+
+    expect(response.status).toBe(303);
+    expect(polarCalls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_session", subscriptionUpdate: { cancelAtPeriodEnd: true } },
+    });
+    expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+    expect(JSON.stringify(polarCalls)).not.toContain("sub_victim");
+  });
+
+  /*
+   * The dispatch the page no longer encodes. Same route, same hostile body, but the account
+   * holds only the free subscription — so a paid label has to become a checkout rather than
+   * an update, and the checkout still has to carry the session's id.
+   */
+  test("POST /api/plan checks out when the account has no paid subscription yet", async () => {
+    sessionSubscriptions = [sub("sub_free", "prod_free")];
+
+    const response = await planRoute.POST(hostileRequest("max"));
+
+    expect(response.status).toBe(303);
+    expect(polarCalls).toContainEqual({
+      method: "checkouts.create",
+      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+    });
+    expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+    expect(JSON.stringify(polarCalls)).not.toContain("prod_ultra");
+  });
+
+  /*
+   * /api/resume reads no body at all, so the hostile request is a pure test of the session
+   * boundary: everything the caller supplies is ignored and the subscription is whichever
+   * paid one the session's Polar customer holds.
+   */
+  test("POST /api/resume resumes the session's subscription, ignoring the request entirely", async () => {
+    sessionSubscriptions = [sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true })];
+
+    const response = await resumeRoute.POST();
+
+    expect(response.status).toBe(303);
+    expect(polarCalls).toContainEqual({
+      method: "customers.getStateExternal",
+      args: { externalId: SESSION_USER_ID },
+    });
+    expect(polarCalls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_session", subscriptionUpdate: { cancelAtPeriodEnd: false } },
+    });
+    expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
   });
 
   // A poisoned Host header would otherwise decide where Polar sends a paying customer next.
