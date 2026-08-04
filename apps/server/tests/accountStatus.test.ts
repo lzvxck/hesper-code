@@ -1,101 +1,124 @@
 import { describe, expect, test } from "bun:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { SUBSCRIPTION_STATUSES } from "@seri/plans";
-import { type StoredAccountStatus, shouldWrite, upsertAccountStatus } from "../lib/accountStatus";
+import { upsertAccountStatus } from "../lib/accountStatus";
 
-function fakeSupabase(error: unknown = null, stored: StoredAccountStatus | null = null) {
-  const calls: { table: string; row: unknown; opts: unknown }[] = [];
+type Upsert = { row: Record<string, unknown>; opts: Record<string, unknown> };
+type Update = { row: Record<string, unknown>; eq: [string, unknown][]; or: string[] };
+
+/*
+ * Records which statements were issued, not just that something was written. The rule this
+ * module enforces now lives in the UPDATE's filter rather than in a branch taken after a
+ * read, so "did it write?" is no longer the interesting question — "under what condition?" is.
+ */
+function fakeSupabase(error: unknown = null) {
+  const upserts: Upsert[] = [];
+  const updates: Update[] = [];
   const client = {
-    from: (table: string) => ({
-      select: () => ({
-        eq: () => ({ maybeSingle: () => Promise.resolve({ data: stored, error: null }) }),
-      }),
-      upsert: (row: unknown, opts: unknown) => {
-        calls.push({ table, row, opts });
+    from: () => ({
+      upsert: (row: Record<string, unknown>, opts: Record<string, unknown>) => {
+        upserts.push({ row, opts });
         return Promise.resolve({ data: null, error });
+      },
+      update: (row: Record<string, unknown>) => {
+        const record: Update = { row, eq: [], or: [] };
+        updates.push(record);
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            record.eq.push([column, value]);
+            return chain;
+          },
+          or: (expression: string) => {
+            record.or.push(expression);
+            return Promise.resolve({ data: null, error });
+          },
+        };
+        return chain;
       },
     }),
   };
-  return { client: client as unknown as SupabaseClient, calls };
+  return { client: client as unknown as SupabaseClient, upserts, updates };
 }
 
+const FREE_EVENT = {
+  workosUserId: "user_1",
+  email: null,
+  polarCustomerId: "cus_free",
+  status: "revoked",
+  plan: "free",
+} as const;
+
 /*
- * One row per customer, but a paying customer holds two Polar subscriptions — the Free one
- * nothing cancels, plus the paid one. Both emit webhooks into this one row, so without this
- * rule a Free renewal lands after a paid event and rewrites a Max customer as "free". The
- * portal then shows "You're on free", offers the upgrade button, and /api/checkout refuses
- * it with a 409 because Polar still shows the paid subscription — no working action left.
+ * Upgrading revokes the Free subscription immediately before the paid one is created, so a
+ * free `subscription.revoked` and the paid events are in flight together. Arriving late, the
+ * free one would rewrite a paying customer as plan="free", status="revoked".
+ *
+ * This used to be enforced by reading the row and then upserting, which lost exactly that
+ * race: the read could land before the paid write committed. These tests are about the
+ * condition travelling *with* the write.
  */
-describe("shouldWrite", () => {
-  test("drops a free-product event when the row holds an active paid plan", () => {
-    expect(shouldWrite("free", { plan: "max", subscription_status: "active" })).toBe(false);
-  });
+describe("upsertAccountStatus free-event protection", () => {
+  test("conditions the write on the row, instead of reading it first", async () => {
+    const { client, upserts, updates } = fakeSupabase();
 
-  test("always writes a paid-product event, whatever the row currently says", () => {
-    expect(shouldWrite("max", { plan: "free", subscription_status: "active" })).toBe(true);
-    expect(shouldWrite("pro", { plan: "ultra", subscription_status: "active" })).toBe(true);
-  });
+    await upsertAccountStatus(client, FREE_EVENT);
 
-  test.each(["free", null])("writes a free-product event over a stored plan of %p", (plan) => {
-    expect(shouldWrite("free", { plan, subscription_status: "active" })).toBe(true);
+    // Create-if-absent, then claim-if-allowed. Nothing is read.
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id", ignoreDuplicates: true });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.eq).toEqual([["workos_user_id", "user_1"]]);
   });
 
   /*
-   * The clause that keeps churn working. A customer whose paid subscription ended has
-   * plan="pro", status="revoked" sitting in the row; blocking free events there would trap
-   * them on a plan they no longer have.
+   * The two `is.null` clauses are the ones worth asserting by name. In SQL both `plan NOT IN
+   * ('pro',…)` and `subscription_status <> 'active'` evaluate to NULL — not true — when the
+   * column is NULL, so dropping them would make a row with no plan yet refuse every free
+   * event, which is the opposite of what the rule intends.
    */
-  test.each(["revoked", "canceled", "past_due"])(
-    "writes a free-product event when the stored paid plan is %s",
-    (status) => {
-      expect(shouldWrite("free", { plan: "pro", subscription_status: status })).toBe(true);
-    },
-  );
+  test("lets a free event through except over an active paid row", async () => {
+    const { client, updates } = fakeSupabase();
 
-  test("writes when there is no row at all", () => {
-    expect(shouldWrite("free", null)).toBe(true);
+    await upsertAccountStatus(client, FREE_EVENT);
+
+    expect(updates[0]?.or).toEqual([
+      "plan.not.in.(pro,max,ultra),plan.is.null,subscription_status.neq.active,subscription_status.is.null",
+    ]);
   });
 
-  // An unmapped product is not a free product, so it is not what this rule guards against.
-  test("writes an unresolved plan rather than treating it as free", () => {
-    expect(shouldWrite(null, { plan: "max", subscription_status: "active" })).toBe(true);
-  });
-});
+  test("throws when the conditional update fails", async () => {
+    const supabaseError = new Error("write failed");
+    const { client } = fakeSupabase(supabaseError);
 
-describe("upsertAccountStatus row protection", () => {
-  test("issues no write at all for a dropped free event, leaving subscription_status alone", async () => {
-    const { client, calls } = fakeSupabase(null, { plan: "max", subscription_status: "active" });
-
-    await upsertAccountStatus(client, {
-      workosUserId: "user_1",
-      email: null,
-      polarCustomerId: "cus_free",
-      status: "revoked",
-      plan: "free",
-    });
-
-    expect(calls).toEqual([]);
-  });
-
-  test("writes when the stored row is a churned paid plan", async () => {
-    const { client, calls } = fakeSupabase(null, { plan: "pro", subscription_status: "revoked" });
-
-    await upsertAccountStatus(client, {
-      workosUserId: "user_1",
-      email: null,
-      polarCustomerId: "cus_free",
-      status: "active",
-      plan: "free",
-    });
-
-    expect(calls).toHaveLength(1);
+    await expect(upsertAccountStatus(client, FREE_EVENT)).rejects.toThrow(supabaseError);
   });
 });
 
+/*
+ * Paid wins unconditionally, and so does an unresolved plan: a product id this deployment has
+ * no variable for is not a free product, so it is not what the rule guards against.
+ */
 describe("upsertAccountStatus", () => {
+  test.each(["pro", "max", "ultra", null] as const)("writes plan %p with no condition", async (plan) => {
+    const { client, upserts, updates } = fakeSupabase();
+
+    await upsertAccountStatus(client, {
+      workosUserId: "user_1",
+      email: null,
+      polarCustomerId: "cus_1",
+      status: "active",
+      plan,
+    });
+
+    expect(updates).toEqual([]);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id" });
+    expect(upserts[0]?.row.plan).toBe(plan);
+  });
+
   for (const status of SUBSCRIPTION_STATUSES) {
     test(`upserts account_status with subscription_status "${status}"`, async () => {
-      const { client, calls } = fakeSupabase();
+      const { client, upserts } = fakeSupabase();
 
       await upsertAccountStatus(client, {
         workosUserId: "user_1",
@@ -105,10 +128,7 @@ describe("upsertAccountStatus", () => {
         plan: "pro",
       });
 
-      expect(calls).toHaveLength(1);
-      expect(calls[0]?.table).toBe("account_status");
-      expect(calls[0]?.opts).toEqual({ onConflict: "workos_user_id" });
-      const row = calls[0]?.row as Record<string, unknown>;
+      const row = upserts[0]?.row as Record<string, unknown>;
       expect(row.workos_user_id).toBe("user_1");
       expect(row.email).toBe("a@example.com");
       expect(row.polar_customer_id).toBe("cus_1");
@@ -119,7 +139,7 @@ describe("upsertAccountStatus", () => {
   }
 
   test("passes through a null email unchanged", async () => {
-    const { client, calls } = fakeSupabase();
+    const { client, upserts } = fakeSupabase();
 
     await upsertAccountStatus(client, {
       workosUserId: "user_2",
@@ -129,25 +149,7 @@ describe("upsertAccountStatus", () => {
       plan: "free",
     });
 
-    const row = calls[0]?.row as Record<string, unknown>;
-    expect(row.email).toBeNull();
-  });
-
-  // A product id the deployment has no env var for. Writing null beats guessing, and beats
-  // leaving the column stale from a previous subscription.
-  test("passes through a null plan unchanged", async () => {
-    const { client, calls } = fakeSupabase();
-
-    await upsertAccountStatus(client, {
-      workosUserId: "user_4",
-      email: null,
-      polarCustomerId: "cus_4",
-      status: "active",
-      plan: null,
-    });
-
-    const row = calls[0]?.row as Record<string, unknown>;
-    expect(row.plan).toBeNull();
+    expect(upserts[0]?.row.email).toBeNull();
   });
 
   test("throws when Supabase returns an error", async () => {
@@ -160,7 +162,7 @@ describe("upsertAccountStatus", () => {
         email: null,
         polarCustomerId: "cus_3",
         status: "active",
-        plan: "free",
+        plan: "pro",
       }),
     ).rejects.toThrow(supabaseError);
   });
