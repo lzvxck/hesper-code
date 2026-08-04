@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import type { Polar } from "@polar-sh/sdk";
 import { changePlan, createCheckout } from "../lib/billing";
 
@@ -10,19 +10,10 @@ const PRODUCTS = {
 };
 
 const SESSION_USER_ID = "user_session";
+const VICTIM_USER_ID = "user_victim";
+const ORIGIN = "https://portal.seriora.ai";
 
-// Everything an attacker might hope a route reads instead of the session.
-const HOSTILE_BODY = {
-  plan: "max",
-  userId: "user_victim",
-  externalCustomerId: "user_victim",
-  external_id: "user_victim",
-  customerId: "cus_victim",
-  subscriptionId: "sub_victim",
-  productId: "prod_ultra",
-};
-
-function fakePolar(activeSubscriptions: { id: string; productId: string }[]) {
+function fakePolar(activeSubscriptions: { id: string; productId: string }[], updateError?: unknown) {
   const calls: { method: string; args: unknown }[] = [];
   const client = {
     checkouts: {
@@ -40,82 +31,143 @@ function fakePolar(activeSubscriptions: { id: string; productId: string }[]) {
     subscriptions: {
       update: (args: unknown) => {
         calls.push({ method: "subscriptions.update", args });
-        return Promise.resolve({ id: "sub_session" });
+        return updateError ? Promise.reject(updateError) : Promise.resolve({ id: "sub_session" });
+      },
+      revoke: (args: unknown) => {
+        calls.push({ method: "subscriptions.revoke", args });
+        return Promise.resolve({ id: "sub_free" });
       },
     },
   };
   return { client: client as unknown as Polar, calls };
 }
 
-/*
- * This is the only backstop that exists. Supabase Auth is unused here, so there is no
- * auth.uid() and no RLS policy to fall back on: if a route ever derived the account from
- * the request, nothing else in the system would notice.
- */
-describe("createCheckout", () => {
-  test("bills the session's account even when the body names another one", async () => {
-    const { client: polar, calls } = fakePolar([]);
+const deps = (polar: Polar) => ({ polar, products: PRODUCTS, userId: SESSION_USER_ID, origin: ORIGIN });
 
-    const response = await createCheckout(
-      { polar, products: PRODUCTS, userId: SESSION_USER_ID },
-      HOSTILE_BODY.plan,
-    );
+describe("createCheckout", () => {
+  test("bills the session's account, and sends the customer back here afterwards", async () => {
+    const { client: polar, calls } = fakePolar([{ id: "sub_free", productId: "prod_free" }]);
+
+    const response = await createCheckout(deps(polar), "max");
 
     expect(response.status).toBe(303);
     expect(response.headers.get("Location")).toBe("https://sandbox.polar.sh/checkout/abc");
-    expect(calls).toEqual([
-      {
-        method: "checkouts.create",
-        args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID },
+    expect(calls).toContainEqual({
+      method: "checkouts.create",
+      args: {
+        products: ["prod_max"],
+        externalCustomerId: SESSION_USER_ID,
+        successUrl: `${ORIGIN}/`,
       },
-    ]);
+    });
   });
 
-  test("resolves the product id from the plan label, never from the request", async () => {
-    const { client: polar, calls } = fakePolar([]);
+  /*
+   * A checkout subscribes unconditionally. Without this an account whose plan we failed to
+   * recognize — which is every row a webhook without POLAR_PRODUCT_* configured has ever
+   * written — ends up paying for two subscriptions at once.
+   */
+  test("refuses when the account already holds a paid subscription", async () => {
+    const { client: polar, calls } = fakePolar([{ id: "sub_paid", productId: "prod_pro" }]);
 
-    // The label says pro; the body's productId says ultra. The label wins.
-    await createCheckout({ polar, products: PRODUCTS, userId: SESSION_USER_ID }, "pro");
+    const response = await createCheckout(deps(polar), "ultra");
 
-    expect((calls[0]?.args as { products: string[] }).products).toEqual(["prod_pro"]);
+    expect(response.status).toBe(409);
+    expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
+  });
+
+  test("refuses when the account holds a product this deployment cannot identify", async () => {
+    const { client: polar, calls } = fakePolar([{ id: "sub_x", productId: "prod_from_another_environment" }]);
+
+    const response = await createCheckout(deps(polar), "pro");
+
+    expect(response.status).toBe(409);
+    expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
   });
 
   test("rejects a plan label that is not one of the paid three, including free", async () => {
     const { client: polar, calls } = fakePolar([]);
 
     for (const plan of ["free", "enterprise", "", null, { plan: "pro" }]) {
-      const response = await createCheckout({ polar, products: PRODUCTS, userId: SESSION_USER_ID }, plan);
-      expect(response.status).toBe(400);
+      expect((await createCheckout(deps(polar), plan)).status).toBe(400);
     }
     expect(calls).toEqual([]);
   });
 });
 
 describe("changePlan", () => {
-  test("moves the session's subscription even when the body names another one", async () => {
+  test("invoices an upgrade immediately", async () => {
     const { client: polar, calls } = fakePolar([{ id: "sub_session", productId: "prod_pro" }]);
 
-    const response = await changePlan(
-      { polar, products: PRODUCTS, userId: SESSION_USER_ID },
-      HOSTILE_BODY.plan,
-    );
+    const response = await changePlan(deps(polar), "ultra");
 
     expect(response.status).toBe(303);
-    expect(calls).toEqual([
-      { method: "customers.getStateExternal", args: { externalId: SESSION_USER_ID } },
-      {
-        method: "subscriptions.update",
-        args: { id: "sub_session", subscriptionUpdate: { productId: "prod_max", prorationBehavior: "invoice" } },
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: {
+        id: "sub_session",
+        subscriptionUpdate: { productId: "prod_ultra", prorationBehavior: "invoice" },
       },
-    ]);
+    });
   });
 
-  // Polar answers a PATCH on a free subscription with 402 missing_payment_method, so this
-  // case belongs to /api/checkout and must not reach the update at all.
-  test("returns 409 on a free subscription rather than attempting the update", async () => {
+  /*
+   * A drop takes effect at the end of the period the customer already paid for, per
+   * docs-tmp/pricing-tiers.md. "invoice" here would raise an immediate negative proration —
+   * a refund path nothing in this repo has measured.
+   */
+  test("defers a downgrade to the next period", async () => {
+    const { client: polar, calls } = fakePolar([{ id: "sub_session", productId: "prod_ultra" }]);
+
+    const response = await changePlan(deps(polar), "pro");
+
+    expect(response.status).toBe(303);
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: {
+        id: "sub_session",
+        subscriptionUpdate: { productId: "prod_pro", prorationBehavior: "next_period" },
+      },
+    });
+  });
+
+  // Polar does not order activeSubscriptions, and the free subscription outlives the
+  // checkout that superseded it, so [0] here could be either one.
+  test("updates the paid subscription even when the free one is listed first", async () => {
+    const { client: polar, calls } = fakePolar([
+      { id: "sub_free", productId: "prod_free" },
+      { id: "sub_paid", productId: "prod_pro" },
+    ]);
+
+    await changePlan(deps(polar), "max");
+
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_paid", subscriptionUpdate: { productId: "prod_max", prorationBehavior: "invoice" } },
+    });
+    expect(calls).toContainEqual({ method: "subscriptions.revoke", args: { id: "sub_free" } });
+  });
+
+  // Measured against the sandbox: canceled, or merely scheduled to cancel, both answer 403
+  // AlreadyCanceledSubscription. There is no way back through update, only a new checkout.
+  test("answers 409, not a 500, when Polar says the subscription is already canceled", async () => {
+    const alreadyCanceled = Object.assign(new Error("AlreadyCanceledSubscription"), { statusCode: 403 });
+    const { client: polar } = fakePolar([{ id: "sub_session", productId: "prod_pro" }], alreadyCanceled);
+
+    expect((await changePlan(deps(polar), "max")).status).toBe(409);
+  });
+
+  test("propagates a Polar failure that is not a canceled subscription", async () => {
+    const serverError = Object.assign(new Error("polar responded 500"), { statusCode: 500 });
+    const { client: polar } = fakePolar([{ id: "sub_session", productId: "prod_pro" }], serverError);
+
+    await expect(changePlan(deps(polar), "max")).rejects.toThrow("polar responded 500");
+  });
+
+  test("returns 409 rather than attempting the update when only the free subscription is active", async () => {
     const { client: polar, calls } = fakePolar([{ id: "sub_free", productId: "prod_free" }]);
 
-    const response = await changePlan({ polar, products: PRODUCTS, userId: SESSION_USER_ID }, "pro");
+    const response = await changePlan(deps(polar), "pro");
 
     expect(response.status).toBe(409);
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
@@ -124,39 +176,112 @@ describe("changePlan", () => {
   test("returns 409 when the session has no active subscription", async () => {
     const { client: polar, calls } = fakePolar([]);
 
-    const response = await changePlan({ polar, products: PRODUCTS, userId: SESSION_USER_ID }, "pro");
-
-    expect(response.status).toBe(409);
+    expect((await changePlan(deps(polar), "pro")).status).toBe(409);
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
   });
 
   test("rejects a plan label that is not one of the paid three", async () => {
     const { client: polar, calls } = fakePolar([{ id: "sub_session", productId: "prod_pro" }]);
 
-    const response = await changePlan({ polar, products: PRODUCTS, userId: SESSION_USER_ID }, "free");
-
-    expect(response.status).toBe(400);
+    expect((await changePlan(deps(polar), "free")).status).toBe(400);
     expect(calls).toEqual([]);
   });
 });
 
 /*
- * The handlers above are only safe if the route modules keep feeding them the session's
- * userId. They cannot be imported here — authkit-nextjs pulls in `server-only`, which
- * throws outside a React Server Component — so the guard is on their source: each one must
- * take its account from getSessionUser() and read nothing else off the request.
+ * The real route handlers, not a substring search over their source. Supabase Auth is
+ * unused here, so there is no auth.uid() and no RLS policy underneath: if a route ever took
+ * the account from the request, nothing else in the system would notice.
+ *
+ * The handlers are reachable under `bun test` because `server-only` — which
+ * authkit-nextjs imports, and whose module body is a bare `throw` — is replaced first.
+ * Only `getSessionUser` and `getPolarClient` are substituted; the routes' own logic runs.
  */
 describe("route handlers", () => {
-  const ROUTES = ["checkout", "plan", "portal"];
+  let polarCalls: { method: string; args: unknown }[] = [];
+  let checkoutRoute: typeof import("../app/api/checkout/route");
+  let planRoute: typeof import("../app/api/plan/route");
+  let portalRoute: typeof import("../app/api/portal/route");
+  const originalProducts = { ...PRODUCTS };
 
-  for (const route of ROUTES) {
-    test(`/api/${route} takes its account from the session`, async () => {
-      const source = await Bun.file(`${import.meta.dir}/../app/api/${route}/route.ts`).text();
-
-      expect(source).toContain("getSessionUser()");
-      // An account arriving as a query parameter or a header is the shape this forbids.
-      expect(source).not.toContain("searchParams");
-      expect(source).not.toContain("headers");
+  // A request that names somebody else's account in every place one could be smuggled.
+  function hostileRequest(plan: string): Request {
+    const body = new URLSearchParams({
+      plan,
+      userId: VICTIM_USER_ID,
+      externalCustomerId: VICTIM_USER_ID,
+      external_id: VICTIM_USER_ID,
+      customerId: "cus_victim",
+      subscriptionId: "sub_victim",
+      productId: "prod_ultra",
+    });
+    return new Request(`${ORIGIN}/api/checkout?userId=${VICTIM_USER_ID}&externalCustomerId=${VICTIM_USER_ID}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-account-id": VICTIM_USER_ID,
+        "x-workos-user-id": VICTIM_USER_ID,
+      },
+      body,
     });
   }
+
+  beforeAll(async () => {
+    for (const [name, value] of Object.entries(originalProducts)) process.env[name] = value;
+
+    mock.module("server-only", () => ({}));
+    mock.module("../lib/session", () => ({
+      getSessionUser: async () => ({ userId: SESSION_USER_ID, email: "someone@seriora.ai" }),
+    }));
+    mock.module("../lib/polar", () => ({
+      ...require("../lib/polar"),
+      getPolarClient: () => {
+        const { client, calls } = fakePolar([{ id: "sub_session", productId: "prod_pro" }]);
+        polarCalls = calls;
+        return client;
+      },
+    }));
+
+    checkoutRoute = await import("../app/api/checkout/route");
+    planRoute = await import("../app/api/plan/route");
+    portalRoute = await import("../app/api/portal/route");
+  });
+
+  afterAll(() => {
+    // Unset originally, so it has to be deleted — assigning undefined stores the string.
+    for (const name of Object.keys(originalProducts)) delete process.env[name];
+  });
+
+  test("POST /api/checkout sends Polar the session's account, not the request's", async () => {
+    // Already on Pro, so this one is refused — and the refusal itself is decided from the
+    // session's Polar state, which is the point.
+    const response = await checkoutRoute.POST(hostileRequest("max"));
+
+    expect(response.status).toBe(409);
+    expect(polarCalls).toContainEqual({
+      method: "customers.getStateExternal",
+      args: { externalId: SESSION_USER_ID },
+    });
+    expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+  });
+
+  test("POST /api/plan updates the session's subscription, not the one named in the request", async () => {
+    const response = await planRoute.POST(hostileRequest("max"));
+
+    expect(response.status).toBe(303);
+    expect(polarCalls).toContainEqual({
+      method: "customers.getStateExternal",
+      args: { externalId: SESSION_USER_ID },
+    });
+    expect(polarCalls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_session", subscriptionUpdate: { productId: "prod_max", prorationBehavior: "invoice" } },
+    });
+    expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+    expect(JSON.stringify(polarCalls)).not.toContain("sub_victim");
+  });
+
+  test("/api/portal resolves its customer from the session and ignores the request entirely", async () => {
+    expect(await portalRoute.getExternalCustomerId()).toBe(SESSION_USER_ID);
+  });
 });
