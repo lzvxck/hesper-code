@@ -1,6 +1,7 @@
 import { Button, SiteFooter, SiteNav } from "@seri/ui";
-import { signOut } from "@workos-inc/authkit-nextjs";
 
+import { endSession } from "@/lib/actions";
+import { isPaidPlan } from "@/lib/plans";
 import { getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
@@ -22,14 +23,13 @@ export default async function AccountPage() {
     user,
   );
 
-  // Free -> paid must go through a checkout, because the free subscription never took a
-  // card. An unrecognized product is treated the same way: checkout cannot 402.
-  const action = plan === "free" || plan === null ? "/api/checkout" : "/api/plan";
-
-  async function endSession() {
-    "use server";
-    await signOut();
-  }
+  /*
+   * Only a positively recognized paid plan can be changed through /api/plan; everything
+   * else goes to checkout, because free -> paid cannot be an update (the free subscription
+   * never took a card, so Polar answers 402). Sending an unrecognized plan to checkout is
+   * safe now that createCheckout refuses an account already holding something paid.
+   */
+  const action = isPaidPlan(plan) ? "/api/plan" : "/api/checkout";
 
   return (
     <>
