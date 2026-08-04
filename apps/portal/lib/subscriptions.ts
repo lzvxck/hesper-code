@@ -1,4 +1,3 @@
-import type { Polar } from "@polar-sh/sdk";
 import { type PaidPlan, type ProductEnv, isPaidPlan, planForProductId } from "@seri/plans";
 
 /*
@@ -8,7 +7,6 @@ import { type PaidPlan, type ProductEnv, isPaidPlan, planForProductId } from "@s
 export type ActiveSubscription = {
   id: string;
   productId: string;
-  amount: number;
   cancelAtPeriodEnd: boolean;
 };
 
@@ -29,38 +27,18 @@ export function paidSubscription(
   return null;
 }
 
-export function freeSubscription(
-  subscriptions: ActiveSubscription[],
-  env: ProductEnv,
-): ActiveSubscription | null {
-  return subscriptions.find((s) => planForProductId(s.productId, env) === "free") ?? null;
-}
-
 /*
- * Nothing on Polar's side cancels the API-created Free subscription when a paid one starts,
- * and this codebase has no way to verify whether that will ever change — so the account is
- * left holding both until we clear it ourselves.
+ * "Everything this account holds is the configured free product."
  *
- * Three preconditions, because this is irreversible: a paid subscription must be positively
- * identified, the victim must map to the configured free product, and it must actually cost
- * nothing. The last one is the backstop for a POLAR_PRODUCT_FREE pointed at a paid product
- * by mistake — without it a configuration typo cancels a subscription somebody is paying
- * for.
+ * One predicate for two decisions that must agree: what plan the page reports, and whether
+ * a checkout is allowed. They used to differ — the page said "free" if *any* free
+ * subscription was present, while checkout refused if *any* subscription failed to map to
+ * free. Rotate a product id and the page rendered "You're on free" above buttons that all
+ * came back 409.
  *
- * A failure is logged rather than propagated: this is bookkeeping, and it must never be the
- * reason a page render or a plan change fails.
+ * Vacuously true for an account with no subscriptions, which is exactly right for both
+ * callers: nothing to report, and nothing blocking a first checkout.
  */
-export async function revokeSupersededFree(
-  polar: Polar,
-  subscriptions: ActiveSubscription[],
-  products: ProductEnv,
-): Promise<void> {
-  if (!paidSubscription(subscriptions, products)) return;
-  const free = freeSubscription(subscriptions, products);
-  if (!free || free.amount !== 0) return;
-  try {
-    await polar.subscriptions.revoke({ id: free.id });
-  } catch (error) {
-    console.warn(`Could not revoke superseded free subscription ${free.id}:`, error);
-  }
+export function holdsOnlyFree(subscriptions: ActiveSubscription[], env: ProductEnv): boolean {
+  return subscriptions.every((s) => planForProductId(s.productId, env) === "free");
 }

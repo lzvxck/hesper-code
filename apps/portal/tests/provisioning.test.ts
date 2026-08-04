@@ -34,7 +34,7 @@ type FakeState = { activeSubscriptions: ActiveSubscription[] } | null;
 
 // Free costs nothing and is not winding down, unless a test says otherwise.
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, amount: productId === "prod_free" ? 0 : 2000, cancelAtPeriodEnd: false, ...overrides };
+  return { id, productId, cancelAtPeriodEnd: false, ...overrides };
 }
 
 function polarError(statusCode: number) {
@@ -158,52 +158,21 @@ describe("ensureProvisioned", () => {
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("ultra");
   });
 
-  test("revokes the free subscription a paid one has superseded", async () => {
-    const { client: supabase } = fakeSupabase(null);
-    const { client: polar, calls } = fakePolar([
-      {
-        activeSubscriptions: [
-          sub("sub_free", "prod_free"),
-          sub("sub_paid", "prod_pro"),
-        ],
-      },
-    ]);
-
-    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
-
-    expect(calls).toContainEqual({ method: "subscriptions.revoke", args: { id: "sub_free" } });
-  });
-
   /*
-   * The backstop for a POLAR_PRODUCT_FREE pointed at a paid product by mistake. Without the
-   * amount check, that one configuration typo cancels a subscription somebody is paying for
-   * — irreversibly, on a page load.
+   * A paying customer keeps both subscriptions and that is now deliberate. Revoking the
+   * free one made Polar emit subscription.revoked for the free product, which the webhook
+   * wrote as plan="free", status="revoked" over a customer paying for Max — the row is one
+   * per customer, so the last event in wins. Selection is by product, so the spare
+   * subscription is inert.
    */
-  test("never revokes a subscription that costs money, whatever the config says is free", async () => {
+  test("leaves the free subscription in place when a paid one exists", async () => {
     const { client: supabase } = fakeSupabase(null);
     const { client: polar, calls } = fakePolar([
-      {
-        activeSubscriptions: [
-          sub("sub_mislabelled", "prod_free", { amount: 2000 }),
-          sub("sub_paid", "prod_pro"),
-        ],
-      },
+      { activeSubscriptions: [sub("sub_free", "prod_free"), sub("sub_paid", "prod_pro")] },
     ]);
 
-    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
-
-    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
-  });
-
-  test("leaves a lone free subscription alone", async () => {
-    const { client: supabase } = fakeSupabase(null);
-    const { client: polar, calls } = fakePolar([
-      { activeSubscriptions: [sub("sub_free", "prod_free")] },
-    ]);
-
-    await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
-
-    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toBe("pro");
+    expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
   });
 
   // Subscribing them to Free on top of a product we cannot identify risks charging twice.

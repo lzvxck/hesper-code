@@ -16,7 +16,7 @@ const ORIGIN = "https://portal.seriora.ai";
 
 // Free costs nothing and is not winding down, unless a test says otherwise.
 function sub(id: string, productId: string, overrides: Partial<ActiveSubscription> = {}): ActiveSubscription {
-  return { id, productId, amount: productId === "prod_free" ? 0 : 2000, cancelAtPeriodEnd: false, ...overrides };
+  return { id, productId, cancelAtPeriodEnd: false, ...overrides };
 }
 
 function fakePolar(
@@ -154,7 +154,9 @@ describe("changePlan", () => {
       method: "subscriptions.update",
       args: { id: "sub_paid", subscriptionUpdate: { productId: "prod_max", prorationBehavior: "invoice" } },
     });
-    expect(calls).toContainEqual({ method: "subscriptions.revoke", args: { id: "sub_free" } });
+    // The free subscription is left running on purpose; revoking it made Polar emit an
+    // event that overwrote the paying customer's row.
+    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
   });
 
   /*
@@ -196,22 +198,6 @@ describe("changePlan", () => {
     const { client: polar } = fakePolar([sub("sub_session", "prod_pro")], alreadyCanceled);
 
     expect((await changePlan(deps(polar), "max")).status).toBe(409);
-  });
-
-  /*
-   * Revoking is irreversible and the update is not guaranteed to succeed. Doing them the
-   * other way round cancels the free fallback and then leaves the account on the plan it
-   * was already on.
-   */
-  test("does not revoke the free subscription when the update fails", async () => {
-    const serverError = Object.assign(new Error("polar responded 500"), { statusCode: 500 });
-    const { client: polar, calls } = fakePolar(
-      [sub("sub_free", "prod_free"), sub("sub_paid", "prod_pro")],
-      serverError,
-    );
-
-    await expect(changePlan(deps(polar), "max")).rejects.toThrow("polar responded 500");
-    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
   });
 
   test("propagates a Polar failure that is not a canceled subscription", async () => {

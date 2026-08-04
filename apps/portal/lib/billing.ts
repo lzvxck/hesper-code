@@ -1,7 +1,7 @@
 import type { Polar } from "@polar-sh/sdk";
 import { type ProductEnv, isPaidPlan, isUpgrade, planForProductId, productIdForPlan } from "@seri/plans";
 import { getCustomerState, polarStatusCode } from "./polar";
-import { type ActiveSubscription, paidSubscription, revokeSupersededFree } from "./subscriptions";
+import { type ActiveSubscription, holdsOnlyFree, paidSubscription } from "./subscriptions";
 
 /*
  * `userId` is the AuthKit session's, supplied by the route. A plan label is the only thing
@@ -63,7 +63,7 @@ export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<
    */
   const state = await getCustomerState(deps.polar, deps.userId);
   const subscriptions = state?.activeSubscriptions ?? [];
-  if (subscriptions.some((s) => planForProductId(s.productId, deps.products) !== "free")) {
+  if (!holdsOnlyFree(subscriptions, deps.products)) {
     return new Response(scheduledToCancel(subscriptions) ? SCHEDULED_TO_CANCEL : ALREADY_PAID, { status: 409 });
   }
 
@@ -128,10 +128,5 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
     }
     throw error;
   }
-
-  // Only now. Revoking is irreversible and the update above is not guaranteed to succeed —
-  // doing this first would cancel the free fallback and then leave the account on the plan
-  // it was already on.
-  await revokeSupersededFree(deps.polar, subscriptions, deps.products);
   return seeOther("/");
 }

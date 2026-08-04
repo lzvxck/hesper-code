@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAccountStatus } from "./accountStatus";
 import { getCustomerState } from "./polar";
 import type { SessionUser } from "./session";
-import { freeSubscription, paidSubscription, revokeSupersededFree } from "./subscriptions";
+import { holdsOnlyFree, paidSubscription } from "./subscriptions";
 
 export type ProvisioningDeps = {
   supabase: SupabaseClient;
@@ -81,15 +81,18 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
   const state = await ensureCustomer(deps.polar, user);
   const subscriptions = state?.activeSubscriptions ?? [];
 
+  /*
+   * A paying customer keeps the Free subscription alongside the paid one — nothing cancels
+   * it, and nothing needs to. Selection is by product, so the extra row is inert here, and
+   * the webhook refuses to let its events overwrite an active paid row.
+   */
   const paid = paidSubscription(subscriptions, deps.products);
-  if (paid) {
-    await revokeSupersededFree(deps.polar, subscriptions, deps.products);
-    return paid.plan;
-  }
+  if (paid) return paid.plan;
 
-  // Active, but on nothing we recognize. Adding a Free subscription on top of a product we
-  // cannot identify risks charging twice, so report the uncertainty rather than write.
-  if (subscriptions.length > 0) return freeSubscription(subscriptions, deps.products) ? "free" : null;
+  // Active, but not on something we can fully account for. Adding a Free subscription on
+  // top of a product we cannot identify risks charging twice, so report the uncertainty
+  // rather than write — the same predicate createCheckout refuses on.
+  if (subscriptions.length > 0) return holdsOnlyFree(subscriptions, deps.products) ? "free" : null;
 
   await ensureFreeSubscription(deps.polar, user.userId, freeProductId);
 
