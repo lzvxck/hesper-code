@@ -10,7 +10,7 @@ site's `--font-mono` stack already falls back to on Windows. Regenerating elsewh
 pointing `centred`'s font directory at an equivalent mono face.
 
 Crop boxes are the measured content bounds of the source artwork, not eyeballed:
-  logo.png              mark bbox (198, 352, 820, 480); sun = circle (508, 455) r 102
+  logo.jpg              mark bbox (198, 352, 820, 480); sun = circle (508, 455) r 102
   seriora-research.jpg  lockup bbox (394, 473, 1227, 1056)
 """
 
@@ -25,13 +25,13 @@ WHITE = (255, 255, 255)
 def icon(out):
     # Square crop centred on the mark's optical centre (508, 418), side 420 — wide enough
     # that the horizon line still reads at 32x32 rather than running off the edge.
-    src = Image.open("brand/logo.png").convert("RGB")
+    src = Image.open("brand/logo.jpg").convert("RGB")
     src.crop((298, 208, 718, 628)).resize((512, 512), Image.LANCZOS).save(out)
 
 
 def og_web(out):
     card = Image.new("RGB", (1200, 630), BLACK)
-    art = Image.open("brand/logo.png").convert("RGB").crop(MARK)
+    art = Image.open("brand/logo.jpg").convert("RGB").crop(MARK)
     w = 460
     h = round(art.height * w / art.width)
     card.paste(art.resize((w, h), Image.LANCZOS), ((1200 - w) // 2, 232 - h))
