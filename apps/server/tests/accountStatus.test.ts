@@ -27,6 +27,7 @@ describe("upsertAccountStatus", () => {
         email: "a@example.com",
         polarCustomerId: "cus_1",
         status,
+        plan: "pro",
       });
 
       expect(calls).toHaveLength(1);
@@ -37,6 +38,7 @@ describe("upsertAccountStatus", () => {
       expect(row.email).toBe("a@example.com");
       expect(row.polar_customer_id).toBe("cus_1");
       expect(row.subscription_status).toBe(status);
+      expect(row.plan).toBe("pro");
       expect(typeof row.updated_at).toBe("string");
     });
   }
@@ -49,10 +51,28 @@ describe("upsertAccountStatus", () => {
       email: null,
       polarCustomerId: "cus_2",
       status: "active",
+      plan: "free",
     });
 
     const row = calls[0]?.row as Record<string, unknown>;
     expect(row.email).toBeNull();
+  });
+
+  // A product id the deployment has no env var for. Writing null beats guessing, and beats
+  // leaving the column stale from a previous subscription.
+  test("passes through a null plan unchanged", async () => {
+    const { client, calls } = fakeSupabase();
+
+    await upsertAccountStatus(client, {
+      workosUserId: "user_4",
+      email: null,
+      polarCustomerId: "cus_4",
+      status: "active",
+      plan: null,
+    });
+
+    const row = calls[0]?.row as Record<string, unknown>;
+    expect(row.plan).toBeNull();
   });
 
   test("throws when Supabase returns an error", async () => {
@@ -65,6 +85,7 @@ describe("upsertAccountStatus", () => {
         email: null,
         polarCustomerId: "cus_3",
         status: "active",
+        plan: "free",
       }),
     ).rejects.toThrow(supabaseError);
   });

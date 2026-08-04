@@ -28,9 +28,24 @@ export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | 
   }
 }
 
+const PLAN_PRODUCT_ENV_VAR: Record<string, string> = {
+  free: "POLAR_PRODUCT_FREE",
+  pro: "POLAR_PRODUCT_PRO",
+  max: "POLAR_PRODUCT_MAX",
+  ultra: "POLAR_PRODUCT_ULTRA",
+};
+
+// Product ids differ between the Polar sandbox and production, so the mapping is
+// configuration rather than a constant, and the record is injected so a test needs no
+// environment of its own.
+export function toPlan(productId: string, env: Record<string, string | undefined> = process.env): string | null {
+  return Object.keys(PLAN_PRODUCT_ENV_VAR).find((plan) => env[PLAN_PRODUCT_ENV_VAR[plan]!] === productId) ?? null;
+}
+
 export function toAccountStatusParams(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
+  plan: string | null,
 ): AccountStatusUpsertParams | null {
   if (!customer.externalId) return null;
   return {
@@ -38,15 +53,21 @@ export function toAccountStatusParams(
     email: customer.email ?? null,
     polarCustomerId: customer.id,
     status,
+    plan,
   };
 }
 
 function upsertFromCustomer(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
+  productId: string,
   supabase: SupabaseClient = getSupabaseClient(),
 ): Promise<void> {
-  const params = toAccountStatusParams(customer, status);
+  const plan = toPlan(productId);
+  if (!plan) {
+    console.warn(`Polar webhook: unrecognized product id "${productId}", writing plan as null`);
+  }
+  const params = toAccountStatusParams(customer, status, plan);
   if (!params) {
     console.warn(`Polar webhook: customer ${customer.id} has no externalId, skipping upsert`);
     return Promise.resolve();
@@ -66,7 +87,7 @@ function syncSubscription(
     console.warn(`Polar webhook: unrecognized subscription status "${payload.data.status}", skipping upsert`);
     return Promise.resolve();
   }
-  return upsertFromCustomer(payload.data.customer, status);
+  return upsertFromCustomer(payload.data.customer, status, payload.data.productId);
 }
 
 // Polar keeps `data.status` as "active" while a cancellation is only scheduled
@@ -76,7 +97,7 @@ export function onSubscriptionCanceled(
   payload: WebhookSubscriptionCanceledPayload,
   supabase?: SupabaseClient,
 ): Promise<void> {
-  return upsertFromCustomer(payload.data.customer, "canceled", supabase);
+  return upsertFromCustomer(payload.data.customer, "canceled", payload.data.productId, supabase);
 }
 
 export const POST = Webhooks({
@@ -87,5 +108,5 @@ export const POST = Webhooks({
   onSubscriptionUncanceled: syncSubscription,
   onSubscriptionUpdated: syncSubscription,
   onSubscriptionRevoked: (payload: WebhookSubscriptionRevokedPayload) =>
-    upsertFromCustomer(payload.data.customer, "revoked"),
+    upsertFromCustomer(payload.data.customer, "revoked", payload.data.productId),
 });

@@ -7,6 +7,7 @@ export type AccountStatusUpsertParams = {
   email: string | null;
   polarCustomerId: string;
   status: SubscriptionStatus;
+  plan: string | null;
 };
 
 export async function upsertAccountStatus(
@@ -19,6 +20,7 @@ export async function upsertAccountStatus(
       email: params.email,
       polar_customer_id: params.polarCustomerId,
       subscription_status: params.status,
+      plan: params.plan,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "workos_user_id" },
