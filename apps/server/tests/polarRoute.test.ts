@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { SubscriptionCustomer } from "@polar-sh/sdk/models/components/subscriptioncustomer";
 import type { WebhookSubscriptionCanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptioncanceledpayload";
+import type { WebhookSubscriptionUpdatedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionupdatedpayload";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { onSubscriptionCanceled, toAccountStatusParams, toPlan, toSubscriptionStatus } from "../app/api/webhooks/polar/route";
+import { onSubscriptionCanceled, syncSubscription, toAccountStatusParams, toPlan, toSubscriptionStatus } from "../app/api/webhooks/polar/route";
 
 const PRODUCTS = {
   POLAR_PRODUCT_FREE: "prod_free",
@@ -143,6 +144,59 @@ function canceledPayload(productId: string): WebhookSubscriptionCanceledPayload 
     data: { status: "active", productId, customer: fakeCustomer({}) },
   } as unknown as WebhookSubscriptionCanceledPayload;
 }
+
+function updatedPayload(status: string, cancelAtPeriodEnd: boolean): WebhookSubscriptionUpdatedPayload {
+  return {
+    data: { status, cancelAtPeriodEnd, productId: "prod_pro", customer: fakeCustomer({}) },
+  } as unknown as WebhookSubscriptionUpdatedPayload;
+}
+
+/*
+ * `subscription.updated` fires for *every* change to a subscription, so scheduling a
+ * cancellation delivers it alongside `subscription.canceled` as two independent POSTs with no
+ * ordering guarantee between them. onSubscriptionCanceled hardcodes "canceled" precisely
+ * because Polar keeps data.status at "active" through the notice period — but that only holds
+ * the row if the `updated` event does not then overwrite it from the same stale field.
+ *
+ * What that costs when it happens is not cosmetic: the portal's fast path returns
+ * `{plan:"pro", endsAt:null}` for an active row without consulting Polar, so the page renders
+ * an ordinary paying account — no end date, no Resume — and offers switch buttons that
+ * changePlan answers 409 to, because Polar still has cancelAtPeriodEnd set.
+ */
+describe("syncSubscription", () => {
+  beforeAll(() => {
+    for (const [name, value] of Object.entries(PRODUCTS)) process.env[name] = value;
+  });
+  afterAll(() => {
+    for (const name of Object.keys(PRODUCTS)) delete process.env[name];
+  });
+
+  test("writes 'canceled' when an update carries a pending cancellation", async () => {
+    const { client, calls } = fakeSupabase();
+
+    await syncSubscription(updatedPayload("active", true), client);
+
+    expect(calls[0]?.row.subscription_status).toBe("canceled");
+  });
+
+  test("writes 'active' for an ordinary update, so a renewal is not read as a cancellation", async () => {
+    const { client, calls } = fakeSupabase();
+
+    await syncSubscription(updatedPayload("active", false), client);
+
+    expect(calls[0]?.row.subscription_status).toBe("active");
+  });
+
+  // The override is scoped to the status Polar leaves misleading. past_due is already
+  // accurate and more specific, and overwriting it would hide a failing payment.
+  test("leaves a status that is not 'active' alone", async () => {
+    const { client, calls } = fakeSupabase();
+
+    await syncSubscription(updatedPayload("past_due", true), client);
+
+    expect(calls[0]?.row.subscription_status).toBe("past_due");
+  });
+});
 
 describe("onSubscriptionCanceled", () => {
   // The route resolves the plan through process.env, so these have to be real for the

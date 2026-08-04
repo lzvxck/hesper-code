@@ -92,19 +92,34 @@ function upsertFromCustomer(
   return upsertAccountStatus(supabase, params);
 }
 
-function syncSubscription(
+/*
+ * `subscription.updated` fires for every change a subscription undergoes, so scheduling a
+ * cancellation delivers it *as well as* `subscription.canceled` — two independent POSTs, no
+ * ordering guarantee. onSubscriptionCanceled below hardcodes "canceled" because data.status
+ * stays "active" through the notice period; that is worth nothing if this handler then
+ * rewrites the row from the same misleading field a moment later, which is what it did.
+ *
+ * So the pending cancellation is read from the payload rather than inferred from the event
+ * name, and both handlers reach the same answer no matter which order they arrive in.
+ *
+ * The override is scoped to "active" deliberately. past_due and canceled are already accurate
+ * and more specific, and flattening them to "canceled" would hide a failing payment.
+ */
+export function syncSubscription(
   payload:
     | WebhookSubscriptionCreatedPayload
     | WebhookSubscriptionActivePayload
     | WebhookSubscriptionUncanceledPayload
     | WebhookSubscriptionUpdatedPayload,
+  supabase?: SupabaseClient,
 ): Promise<void> {
-  const status = toSubscriptionStatus(payload.data.status);
-  if (!status) {
+  const mapped = toSubscriptionStatus(payload.data.status);
+  if (!mapped) {
     console.warn(`Polar webhook: unrecognized subscription status "${payload.data.status}", skipping upsert`);
     return Promise.resolve();
   }
-  return upsertFromCustomer(payload.data.customer, status, payload.data.productId);
+  const status = mapped === "active" && payload.data.cancelAtPeriodEnd ? "canceled" : mapped;
+  return upsertFromCustomer(payload.data.customer, status, payload.data.productId, supabase);
 }
 
 // Polar keeps `data.status` as "active" while a cancellation is only scheduled
