@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const INSTALL_SH = "curl -fsSL https://raw.githubusercontent.com/lzvxck/hesper-code/main/install.sh | bash";
+const INSTALL_SH = "curl -fsSL https://raw.githubusercontent.com/lzvxck/seri-agent/main/install.sh | bash";
 
 /*
  * macOS and Linux run the identical script — it detects OS and CPU architecture and
@@ -34,7 +34,7 @@ const PLATFORMS = [
     label: "Windows",
     icon: AppWindow,
     shell: "powershell",
-    command: "irm https://raw.githubusercontent.com/lzvxck/hesper-code/main/install.ps1 | iex",
+    command: "irm https://raw.githubusercontent.com/lzvxck/seri-agent/main/install.ps1 | iex",
     note: "x64, via PowerShell.",
   },
 ] as const;

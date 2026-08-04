@@ -1,5 +1,5 @@
 {
-  "name": "@seri/web",
+  "name": "@seri/lab",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -8,7 +8,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@radix-ui/react-tabs": "^1.1.21",
     "@seri/ui": "workspace:*",
     "@tailwindcss/postcss": "^4",
     "lucide-react": "^1.28.0",
