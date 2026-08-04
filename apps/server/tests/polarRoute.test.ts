@@ -121,10 +121,14 @@ describe("toAccountStatusParams", () => {
   });
 });
 
+// upsertAccountStatus reads the existing row before writing, so the fake has to answer a
+// select as well. No stored row here — these tests are about what gets written, not about
+// the free-over-paid protection, which accountStatus.test.ts covers.
 function fakeSupabase() {
   const calls: { row: Record<string, unknown> }[] = [];
   const client = {
     from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }),
       upsert: (row: Record<string, unknown>) => {
         calls.push({ row });
         return Promise.resolve({ data: null, error: null });
