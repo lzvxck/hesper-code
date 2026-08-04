@@ -21,6 +21,13 @@ export type PlanCard = {
  * plan, not Free: Free is where they arrive later, which the note on the Free card says
  * outright. Marking Free as current there is exactly the misreading the old layout invited.
  *
+ * What that card must not do is *call itself* current. Reported against the live page: right
+ * after a downgrade the Pro card read "Current plan" while the heading above it read "Pro
+ * until 4 September, then Free", and one of the two had to be wrong. So a plan on its way out
+ * carries its end date instead, and the pair reads as the timeline it is — "Ends 4 September"
+ * above "Begins 4 September". The styling still marks it, because access today really is
+ * Pro's; only the word that outlived the cancellation is gone.
+ *
  * Visible is not the same as actionable, and the two states that suppress every button do it
  * for different reasons:
  *
@@ -43,7 +50,9 @@ export function planCards(
   return PLANS.map((tier) => {
     const current = tier === plan;
     const note = current
-      ? "Current plan"
+      ? endsAt
+        ? `Ends ${formatDate(endsAt)}`
+        : "Current plan"
       : endsAt && tier === "free"
         ? `Begins ${formatDate(endsAt)}`
         : null;

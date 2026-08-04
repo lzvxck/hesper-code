@@ -46,8 +46,20 @@ describe("planCards", () => {
     test("keeps the paid plan current — Free is where the account arrives, not where it is", () => {
       const cards = byPlan(planCards("pro", ENDS_AT, formatDate));
 
-      expect(cards.pro).toMatchObject({ current: true, note: "Current plan" });
-      expect(cards.free).toMatchObject({ current: false, note: "Begins 4 September" });
+      expect(cards.pro.current).toBe(true);
+      expect(cards.free.current).toBe(false);
+    });
+
+    /*
+     * The pair has to read as one timeline. Calling the outgoing plan "Current plan" — which
+     * it did, on the live page — contradicts the heading directly above it, which says the
+     * same plan ends on that date.
+     */
+    test("dates both ends of the move instead of calling the outgoing plan current", () => {
+      const cards = byPlan(planCards("pro", ENDS_AT, formatDate));
+
+      expect(cards.pro.note).toBe("Ends 4 September");
+      expect(cards.free.note).toBe("Begins 4 September");
     });
 
     /*
