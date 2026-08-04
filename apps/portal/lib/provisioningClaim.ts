@@ -72,10 +72,28 @@ async function reclaimStale(supabase: SupabaseClient, workosUserId: string): Pro
   return (data?.length ?? 0) > 0;
 }
 
+/*
+ * Releases the claim by deleting it, because the claim's lifetime is the operation's, not the
+ * customer's.
+ *
+ * This used to set state = "done" and leave the row behind forever, which quietly made the
+ * barrier permanent: the insert then always conflicts, and reclaimStale only matches
+ * `pending`, so claimProvisioning answered false for that user on every later visit. The
+ * customer was then routed down ensureProvisioned's loser branch, which reports Free without
+ * creating anything — so an abandoned checkout (whose free subscription createCheckout had
+ * already revoked) or a lapsed paid subscription left them reading "You're on Free" against
+ * a Polar account holding nothing at all, permanently, on every page load. The one branch
+ * that repairs that is the one the barrier was blocking.
+ *
+ * Deleting is safe against the duplicate-creation problem the barrier exists for, because
+ * after this point the subscription itself is the guard: ensureProvisioned returns at the
+ * activeSubscriptions read long before it reaches a claim, and that read was measured to see
+ * a fresh customer's subscription on the very first call.
+ */
 export async function completeProvisioning(supabase: SupabaseClient, workosUserId: string): Promise<void> {
   const { error } = await supabase
     .from("provisioning_claims")
-    .update({ state: "done" })
+    .delete()
     .eq("workos_user_id", workosUserId);
   if (error) throw error;
 }

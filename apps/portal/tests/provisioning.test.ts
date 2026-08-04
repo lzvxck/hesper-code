@@ -261,6 +261,28 @@ describe("ensureProvisioned", () => {
   });
 
   /*
+   * The same repair, for a customer who has been provisioned before — which is every customer
+   * the repair actually exists for. Both routes to "holds nothing" pass through a first
+   * provisioning by definition: you cannot abandon a checkout, or lapse after a downgrade,
+   * without having had Free first.
+   *
+   * The test above passes with a claim that is never released, because it starts from an
+   * empty claims map. This one shares one client across both visits, which is the state the
+   * customer is really in on the second one.
+   */
+  test("re-creates Free on a later visit, after the first provisioning completed", async () => {
+    const { client: supabase, claims } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar([{ activeSubscriptions: [] }]);
+    const deps = { supabase, polar, products: PRODUCTS };
+
+    await ensureProvisioned(deps, USER);
+    await ensureProvisioned(deps, USER);
+
+    expect(calls.filter((call) => call.method === "subscriptions.create")).toHaveLength(2);
+    expect(claims.size).toBe(0);
+  });
+
+  /*
    * The date the page needs to say "Pro until 4 September, then Free." Polar keeps a
    * scheduled-to-cancel subscription in activeSubscriptions, so without reading
    * cancelAtPeriodEnd the account looks like an ordinary paying one and the notice never
@@ -495,12 +517,14 @@ describe("ensureProvisioned under concurrent renders", () => {
     expect(creates()).toBe(1);
   });
 
-  test("marks the claim done once the subscription exists", async () => {
+  // Released by deletion, not marked done: a row left behind makes the barrier permanent and
+  // blocks the only branch that can put a customer back on Free.
+  test("releases the claim once the subscription exists", async () => {
     const { client: supabase, claims } = fakeSupabase(null);
     const { client: polar } = fanOutPolar();
 
     await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
 
-    expect(claims.get("user_01H")?.state).toBe("done");
+    expect(claims.has("user_01H")).toBe(false);
   });
 });
