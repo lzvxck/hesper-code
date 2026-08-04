@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { SubscriptionCustomer } from "@polar-sh/sdk/models/components/subscriptioncustomer";
 import type { WebhookSubscriptionCanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptioncanceledpayload";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -49,8 +49,21 @@ describe("toPlan", () => {
     expect(toPlan("prod_from_the_other_environment", PRODUCTS)).toBeNull();
   });
 
-  test("returns null for every product id when nothing is configured", () => {
-    expect(toPlan("prod_free", {})).toBeNull();
+  /*
+   * Not a warning. Writing null into every row is what let the portal read a paying
+   * customer as unplanned and sell them a second subscription — the throw becomes a 5xx
+   * Polar retries, so the row stays unwritten until the deployment is configured.
+   */
+  test("throws, naming every missing variable, when nothing is configured", () => {
+    expect(() => toPlan("prod_free", {})).toThrow(
+      "POLAR_PRODUCT_FREE, POLAR_PRODUCT_PRO, POLAR_PRODUCT_MAX, POLAR_PRODUCT_ULTRA not set",
+    );
+  });
+
+  test("throws when only some of the variables are set", () => {
+    const partial = { POLAR_PRODUCT_FREE: "prod_free", POLAR_PRODUCT_PRO: "prod_pro" };
+
+    expect(() => toPlan("prod_free", partial)).toThrow("POLAR_PRODUCT_MAX, POLAR_PRODUCT_ULTRA not set");
   });
 });
 
@@ -89,28 +102,38 @@ function fakeSupabase() {
   return { client: client as unknown as SupabaseClient, calls };
 }
 
+function canceledPayload(productId: string): WebhookSubscriptionCanceledPayload {
+  return {
+    data: { status: "active", productId, customer: fakeCustomer({}) },
+  } as unknown as WebhookSubscriptionCanceledPayload;
+}
+
 describe("onSubscriptionCanceled", () => {
+  // The route resolves the plan through process.env, so these have to be real for the
+  // duration and gone afterwards — reassigning undefined would store the string.
+  beforeAll(() => {
+    for (const [name, value] of Object.entries(PRODUCTS)) process.env[name] = value;
+  });
+  afterAll(() => {
+    for (const name of Object.keys(PRODUCTS)) delete process.env[name];
+  });
+
   test("upserts status 'canceled' even though payload.data.status is still 'active'", async () => {
     const { client, calls } = fakeSupabase();
-    const payload = {
-      data: { status: "active", productId: "prod_pro", customer: fakeCustomer({}) },
-    } as unknown as WebhookSubscriptionCanceledPayload;
 
-    await onSubscriptionCanceled(payload, client);
+    await onSubscriptionCanceled(canceledPayload("prod_pro"), client);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.row.subscription_status).toBe("canceled");
+    expect(calls[0]?.row.plan).toBe("pro");
   });
 
-  // toPlan reads process.env here, which no test sets, so the product id is unmapped and
-  // the column is written as null rather than left out of the row.
-  test("writes a null plan for a product id the environment does not name", async () => {
+  // Configured, but on a product this environment does not name — a leftover from another
+  // Polar organization, say. Null beats guessing, and beats leaving the column stale.
+  test("writes a null plan for a product id that is configured away", async () => {
     const { client, calls } = fakeSupabase();
-    const payload = {
-      data: { status: "active", productId: "prod_pro", customer: fakeCustomer({}) },
-    } as unknown as WebhookSubscriptionCanceledPayload;
 
-    await onSubscriptionCanceled(payload, client);
+    await onSubscriptionCanceled(canceledPayload("prod_from_the_other_environment"), client);
 
     expect(calls[0]?.row.plan).toBeNull();
   });
