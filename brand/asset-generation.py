@@ -7,7 +7,7 @@ static brand assets, not build artifacts. Requires Pillow.
 
 Windows-only as written: the OG card rasterizes text with Consolas, which is what the
 site's `--font-mono` stack already falls back to on Windows. Regenerating elsewhere means
-pointing the two font paths at an equivalent mono face.
+pointing `centred`'s font directory at an equivalent mono face.
 
 Crop boxes are the measured content bounds of the source artwork, not eyeballed:
   logo.png              mark bbox (198, 352, 820, 480); sun = circle (508, 455) r 102
@@ -37,15 +37,15 @@ def og_web(out):
     card.paste(art.resize((w, h), Image.LANCZOS), ((1200 - w) // 2, 232 - h))
 
     d = ImageDraw.Draw(card)
-    for text, path, size, y, fill in [
-        ("seri", "C:/Windows/Fonts/consolab.ttf", 132, 300, WHITE),
-        ("by Seriora Research", "C:/Windows/Fonts/consola.ttf", 34, 470, (150, 150, 150)),
-    ]:
-        font = ImageFont.truetype(path, size)
-        left, _, right, _ = d.textbbox((0, 0), text, font=font)
-        d.text(((1200 - (right - left)) // 2 - left, y), text, font=font, fill=fill)
-
+    centred(d, "seri", "consolab.ttf", 132, 300, WHITE)
+    centred(d, "by Seriora Research", "consola.ttf", 34, 470, (150, 150, 150))
     card.save(out, quality=92)
+
+
+def centred(d, text, font_file, size, y, fill):
+    font = ImageFont.truetype(f"C:/Windows/Fonts/{font_file}", size)
+    left, _, right, _ = d.textbbox((0, 0), text, font=font)
+    d.text(((1200 - (right - left)) // 2 - left, y), text, font=font, fill=fill)
 
 
 def og_lab(out):
