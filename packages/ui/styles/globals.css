@@ -47,13 +47,15 @@
   --color-on-ink-hairline: var(--on-ink-hairline);
 
   /* Typography — section 3 */
-  --font-sans: "Anthropic Sans", Arial, sans-serif;
+  --font-sans: Arial, Helvetica, sans-serif;
   /*
    * The spec's mono fallback is "Arial, sans-serif", which is a measurement artifact —
    * a proportional fallback would break column alignment in the install commands, which
-   * are this page's primary CTA. Real monospace stack, custom face still preferred.
+   * are this page's primary CTA. Both stacks are the system faces: this repo ships no
+   * font file and makes no @font-face or next/font call, so what renders is whatever the
+   * OS provides.
    */
-  --font-mono: "Anthropic Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --text-display: 58px;
   --text-display--line-height: 1.1;

@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://seriora.ai"),
   title: "Seriora Research",
   description:
-    "Seriora Research builds tools for working alongside models — small, legible programs that do what you asked and stop where you said.",
+    "Seriora Research is an independent lab working on autonomous agents that learn from their own work — what an agent should keep, how that changes what it does next, and how anyone can tell whether it actually got better.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
