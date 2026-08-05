@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://portal.seriora.ai"),
-  title: "seri — account",
+  title: "Seriora Portal",
   description: "Manage your seri plan and billing.",
 };
 
