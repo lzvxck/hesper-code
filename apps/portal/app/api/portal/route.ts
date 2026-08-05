@@ -13,9 +13,12 @@ import { getSessionUser } from "@/lib/session";
  * The customer comes from the session and the return URL from configuration; the request is
  * only forwarded, never read.
  *
- * The return carries the same freshness marker a plan change does: cancelling happens *there*,
- * so a customer coming back has just changed their subscription. Why that matters is in
- * provisioning.ts, above the fast path.
+ * The return carries the same freshness marker a plan change does, and unlike a plan change it
+ * is a guess: cancelling happens *there*, but so does reading an invoice, and the two returns
+ * are indistinguishable from here. The guess is deliberately the expensive one — a Polar
+ * round-trip on a read-only visit costs a page load, while missing a cancellation that did
+ * happen shows the customer a subscription they have already ended. Why the row cannot be
+ * trusted right afterwards is in provisioning.ts, above the fast path.
  */
 export async function GET(request: NextRequest): Promise<Response> {
   return CustomerPortal({

@@ -92,9 +92,13 @@ export async function upsertAccountStatus(
    * churned customer as active forever. Anything labelled paid therefore wins outright, and
    * the conditional path is left holding only what is both zero-cost and not a paid tier.
    *
-   * What this still cannot repair is a deployment with *no* product ids at all: every row is
-   * then written with plan null, so `plan.is.null` matches and the filter admits everything.
-   * That is a configuration alarm, not a race — see the deploy runbook.
+   * Two states this still cannot repair, both configuration rather than races, and both in the
+   * deploy runbook. A deployment with *no* product ids writes every row with plan null, so
+   * `plan.is.null` matches and the filter admits everything. And a rotated id puts the paid
+   * label out of reach exactly when the amount test would need it: a zero-amount paid
+   * subscription whose product no longer maps arrives as `plan: null, amount: 0`, takes the
+   * conditional path, fails to match its own active row, and its revoke is dropped. Setting
+   * the product ids correctly is the fix for both; nothing here can substitute for it.
    */
   if (params.amount !== 0 || isPaidPlan(params.plan)) {
     const { error } = await supabase

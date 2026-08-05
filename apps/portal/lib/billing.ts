@@ -29,7 +29,6 @@ function seeOther(location: string): Response {
   return new Response(null, { status: 303, headers: { Location: location } });
 }
 
-
 /*
  * Every way this deployment can be misconfigured ends here, so the body a browser displays has
  * one owner and one wording. The detail goes to the log, never into the response.
@@ -39,7 +38,9 @@ function misconfigured(detail: string): Response {
   return new Response("That plan is unavailable right now.", { status: 500 });
 }
 
-const unconfigured = (plan: string) => misconfigured(`No Polar product id configured for plan "${plan}"`);
+function unconfigured(plan: string): Response {
+  return misconfigured(`No Polar product id configured for plan "${plan}"`);
+}
 
 /*
  * Polar keeps a subscription that is only *scheduled* to cancel inside activeSubscriptions,

@@ -109,10 +109,6 @@ describe("createCheckout", () => {
   });
 
   /*
-   * The backstop for POLAR_PRODUCT_FREE pointed at a paid product. Nothing may cancel a
-   * subscription somebody is paying for in order to sell them another one.
-   */
-  /*
    * The backstop for POLAR_PRODUCT_FREE pointed at a paid product, and the whole of it: nothing
    * may cancel a subscription somebody is paying for in order to sell them another, and
    * refusing to revoke is only half an answer — the account still holds that subscription, so

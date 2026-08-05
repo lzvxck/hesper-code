@@ -63,18 +63,9 @@ async function createFreeSubscription(deps: ProvisioningDeps, userId: string, fr
  */
 export type AccountPlan = { plan: Plan | null; endsAt: Date | null };
 
-/**
- * Establishes a Polar customer and a Free subscription for a session, and reports the plan
- * that is now in force.
- *
- * `fresh` means the caller has just changed the subscription, so the cached row is not
- * consulted for the answer — Polar is. It still gets read if Polar turns out to have nothing
- * to say; see both uses of `storedPlan` below.
- */
-
 /*
- * What a stored row is worth, in one place, because it is now asked twice and the two answers
- * must not differ.
+ * What a stored row is worth, in one place, because it is asked twice and the two answers must
+ * not differ.
  *
  * All three conditions are load-bearing. A revoked or past_due row would otherwise report the
  * plan the customer used to be on and route them at /api/plan, which cannot revive a canceled
@@ -85,6 +76,15 @@ export type AccountPlan = { plan: Plan | null; endsAt: Date | null };
 function storedPlan(row: AccountStatus | null): Plan | null {
   return row?.status === "active" && row.plan ? row.plan : null;
 }
+
+/**
+ * Establishes a Polar customer and a Free subscription for a session, and reports the plan
+ * that is now in force.
+ *
+ * `fresh` means the caller has just changed the subscription, so the cached row is not
+ * consulted for the answer — Polar is. It still gets read, under `storedPlan`'s rule, if Polar
+ * turns out to have nothing to say.
+ */
 export async function ensureProvisioned(
   deps: ProvisioningDeps,
   user: SessionUser,

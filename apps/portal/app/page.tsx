@@ -1,5 +1,6 @@
 import { INCLUDED_SPEND_RATIO, PLAN_MONTHLY_USD, type Plan, isPaidPlan } from "@seri/plans";
 import { Button, SiteFooter, SiteNav } from "@seri/ui";
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { planCards } from "@/lib/accountView";
@@ -7,7 +8,7 @@ import { endSession } from "@/lib/actions";
 import { getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
-import { isFreshLoad } from "@/lib/routes";
+import { isFreshLoad, needsMarkerlessReload } from "@/lib/routes";
 import { getSupabaseClient } from "@/lib/supabase";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
@@ -86,6 +87,7 @@ export default async function AccountPage({
     user,
     { fresh },
   );
+  if (needsMarkerlessReload(fresh, plan)) redirect("/");
   const cards = planCards(plan, endsAt, formatDate);
 
   /*
