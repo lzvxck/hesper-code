@@ -9,7 +9,11 @@ import { describe, expect, test } from "bun:test";
  * and asserted as words: the risk being guarded is a sentence that a reader can falsify by
  * opening the docs, which no type or render check can see.
  */
-const COPY = readFileSync(join(import.meta.dir, "../app/page.tsx"), "utf8");
+const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");
+
+// layout.tsx is scanned alongside the page because the <title> and <meta description> there
+// carry the same learning claim, and they are the copy that travels furthest from the site.
+const COPY = read("../app/page.tsx") + read("../app/layout.tsx");
 
 // Reporting every phrase that hit, rather than asserting one at a time: a failure names
 // the offending words instead of dumping the whole page as the received value.
@@ -52,8 +56,12 @@ describe("apps/web copy", () => {
     ).toEqual([]);
   });
 
-  test("leads with the learning claim, and the gate that bounds it", () => {
+  // D7: the gate and the bound are what make the learning claim checkable, so both are pinned.
+  // Pinning only the gate let the bound be deleted with the suite still green.
+  test("leads with the learning claim, and the gate and bound that hedge it", () => {
     expect(COPY).toContain("learns from its own work");
     expect(COPY).toContain("/memory approve");
+    expect(COPY).toContain("bounded");
+    expect(COPY).toContain("size budget");
   });
 });

@@ -8,7 +8,14 @@ import { describe, expect, test } from "bun:test";
  * was caught by nothing. This reads the page as source text and pins the claims it is not
  * allowed to make, plus the one structural property the copy depends on.
  */
-const PAGE = readFileSync(fileURLToPath(new URL("../app/page.tsx", import.meta.url)), "utf8");
+const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+
+const PAGE = read("../app/page.tsx");
+
+// The vocabulary rules cover layout.tsx too: the <title> and <meta description> make the same
+// kind of claim and travel furthest from the site. The structural assertions below stay on
+// PAGE alone — they are about how this page is built.
+const COPY = PAGE + read("../app/layout.tsx");
 
 const OVERCLAIMS = [
   /the first/i,
@@ -31,19 +38,19 @@ const UNSHIPPED = [
   /scheduled run/i,
   /unattended/i,
   /cross-session search/i,
-  / MCP/,
+  /\bMCP\b/i,
   /plugin/i,
   /sandbox/i,
 ];
 
 describe("seriora.ai copy", () => {
   test("makes no claim it cannot back", () => {
-    for (const pattern of OVERCLAIMS) expect(PAGE).not.toMatch(pattern);
+    for (const pattern of OVERCLAIMS) expect(COPY).not.toMatch(pattern);
   });
 
   test("promises nothing that has not shipped", () => {
-    for (const pattern of FUTURITY) expect(PAGE).not.toMatch(pattern);
-    for (const pattern of UNSHIPPED) expect(PAGE).not.toMatch(pattern);
+    for (const pattern of FUTURITY) expect(COPY).not.toMatch(pattern);
+    for (const pattern of UNSHIPPED) expect(COPY).not.toMatch(pattern);
   });
 
   test("leads with the research thesis", () => {
