@@ -66,7 +66,14 @@ const PLATFORMS = [
 export default function Home() {
   return (
     <>
-      <SiteNav wordmark="seri" repoUrl={REPO_URL} links={[{ label: "Install", href: "#install" }]} />
+      <SiteNav
+        wordmark="seri"
+        repoUrl={REPO_URL}
+        links={[
+          { label: "Install", href: "#install" },
+          { label: "Portal", href: "https://portal.seriora.ai" },
+        ]}
+      />
 
       <main id="top">
         {/* ---------------------------------------------------------------- Hero */}

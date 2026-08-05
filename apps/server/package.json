@@ -13,6 +13,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "@polar-sh/nextjs": "^0.9.6",
+    "@seri/plans": "workspace:*",
     "@supabase/supabase-js": "^2.111.0"
   },
   "devDependencies": {
