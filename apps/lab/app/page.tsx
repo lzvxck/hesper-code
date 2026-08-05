@@ -10,7 +10,7 @@ const PRODUCTS = [
   {
     name: "seri",
     href: AGENT_URL,
-    body: "An autonomous coding agent. It reviews its own sessions, keeps what is worth keeping, and starts the next one knowing it — with every write to its memory staged for your approval first.",
+    body: "An autonomous coding agent. As you work it reviews what happened, keeps what is worth keeping, and starts the next session knowing it — with every write to its memory staged for your approval first.",
   },
 ];
 
@@ -21,7 +21,7 @@ const OPEN_PROBLEMS = [
   },
   {
     title: "Long-horizon autonomy",
-    body: "Unsolved industry-wide. Checkpoints and escalation triggers narrow the blast radius of a long run; they do not make one safe.",
+    body: "Unsolved industry-wide. Checkpoints narrow the blast radius of a long run; they do not make one safe.",
   },
   {
     title: "Lossy compaction",
