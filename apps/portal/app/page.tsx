@@ -7,6 +7,7 @@ import { endSession } from "@/lib/actions";
 import { getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
+import { isFreshLoad } from "@/lib/routes";
 import { getSupabaseClient } from "@/lib/supabase";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
@@ -69,27 +70,21 @@ function Shell({ email, children }: { email: string; children: ReactNode }) {
 }
 
 /*
- * `updated` is set by the 303 every completed plan change answers with, and by the checkout's
- * successUrl. It means "the subscription changed a moment ago", which is exactly when
- * `account_status` cannot be trusted: the webhook writes it asynchronously, so the row still
- * describes the previous state and looks perfectly current while doing so.
- *
- * It is a hint about freshness and nothing else — no account, plan or amount is ever taken
- * from the request. The worst a forged one can do is make the page ask Polar.
+ * The marker is a hint about freshness and nothing else — no account, plan or amount is ever
+ * taken from the request, so the worst a forged one can do is make the page ask Polar. What it
+ * means, and why the stored row cannot be trusted right after a change, is in provisioning.ts.
  */
 export default async function AccountPage({
   searchParams,
 }: {
-  // `?updated=1&updated=2` arrives as an array; only its presence is ever read, but the
-  // annotation should not claim a shape Next does not guarantee.
-  searchParams: Promise<{ updated?: string | string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const user = await getSessionUser();
-  const { updated } = await searchParams;
+  const fresh = isFreshLoad(await searchParams);
   const { plan, endsAt } = await ensureProvisioned(
     { supabase: getSupabaseClient(), polar: getPolarClient(), products: process.env },
     user,
-    { fresh: updated !== undefined },
+    { fresh },
   );
   const cards = planCards(plan, endsAt, formatDate);
 

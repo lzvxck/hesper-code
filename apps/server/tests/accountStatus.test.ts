@@ -197,8 +197,8 @@ describe("upsertAccountStatus", () => {
       email: null,
       polarCustomerId: "cus_2",
       status: "active",
-      plan: "free",
-      amount: 0,
+      plan: "pro",
+      amount: 2000,
     });
 
     expect(upserts[0]?.row.email).toBeNull();

@@ -112,30 +112,23 @@ describe("createCheckout", () => {
    * The backstop for POLAR_PRODUCT_FREE pointed at a paid product. Nothing may cancel a
    * subscription somebody is paying for in order to sell them another one.
    */
-  test("never revokes a subscription that costs money, whatever the config calls free", async () => {
-    const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
-
-    expect((await createCheckout(deps(polar), "pro")).status).toBe(500);
-
-    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
-  });
-
   /*
-   * Refusing to revoke is only half an answer. Polar permits one active subscription per
-   * customer and refuses the Subscribe step while one is live, so continuing to the checkout
-   * hands the customer a URL that cannot complete — the same doomed redirect the failed-revoke
-   * test below exists to prevent, reached by declining to revoke instead of by failing to.
+   * The backstop for POLAR_PRODUCT_FREE pointed at a paid product, and the whole of it: nothing
+   * may cancel a subscription somebody is paying for in order to sell them another, and
+   * refusing to revoke is only half an answer — the account still holds that subscription, so
+   * Polar would refuse the Subscribe step and the checkout URL would lead nowhere.
    */
-  test("stops rather than selling a checkout it just declined to make room for", async () => {
+  test("refuses the checkout rather than revoking a subscription that costs money", async () => {
     const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
 
     const response = await createCheckout(deps(polar), "pro");
 
+    expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+    expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
     // A body a browser can display, like every other misconfiguration in this module — not a
     // raw exception through a route handler that error.tsx does not catch.
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("That plan is unavailable right now.");
-    expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
   });
 
   // A failed revoke means Polar will refuse the Subscribe step, so handing back a checkout

@@ -76,17 +76,19 @@ function freeSubscription(subscriptions: ActiveSubscription[], env: ProductEnv):
  * so continuing only moves the dead end from an error to a checkout page that cannot complete
  * — but a misconfiguration gets the readable 500 this module already gives one, not a raw
  * exception through a route handler that error.tsx does not catch.
+ *
+ * False is that refusal and nothing else: a revoke that *fails* still throws, and nothing to
+ * revoke is true, because the caller's precondition — no free subscription standing in the way
+ * of the checkout — is satisfied either way.
  */
-export type RevokeOutcome = "revoked" | "nothing-to-revoke" | "refused-not-free";
-
 export async function revokeFreeSubscription(
   polar: Polar,
   subscriptions: ActiveSubscription[],
   products: ProductEnv,
-): Promise<RevokeOutcome> {
+): Promise<boolean> {
   const free = freeSubscription(subscriptions, products);
-  if (!free) return "nothing-to-revoke";
-  if (free.amount !== 0) return "refused-not-free";
+  if (!free) return true;
+  if (free.amount !== 0) return false;
   await polar.subscriptions.revoke({ id: free.id });
-  return "revoked";
+  return true;
 }

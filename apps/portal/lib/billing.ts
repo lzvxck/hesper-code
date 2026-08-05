@@ -2,6 +2,7 @@ import type { Polar } from "@polar-sh/sdk";
 import type { SubscriptionUpdate } from "@polar-sh/sdk/models/components/subscriptionupdate";
 import { type ProductEnv, isPaidPlan, isUpgrade, productIdForPlan, toPlan } from "@seri/plans";
 import { getCustomerState, polarStatusCode } from "./polar";
+import { ACCOUNT_UPDATED } from "./routes";
 import {
   type ActiveSubscription,
   holdsOnlyFree,
@@ -28,25 +29,17 @@ function seeOther(location: string): Response {
   return new Response(null, { status: 303, headers: { Location: location } });
 }
 
-/*
- * Where a completed change sends the customer back to. The marker is not decoration: the page
- * reads it and resolves the plan from Polar instead of from `account_status`, which the
- * webhook has almost certainly not written yet at this point. Without it the page they land
- * on shows the plan they just left — no end date after a downgrade, and the old tier after an
- * upgrade they have already been invoiced for.
- *
- * It is deliberately not consumed afterwards. Clearing it would need client JavaScript, which
- * this page does not have and which is worth more than the cost of leaving it: a refresh with
- * the marker still attached only asks Polar again.
- */
-export const UPDATED = "/?updated=1";
 
-// The environment variable that is missing is logged, not returned: a 500 body is something
-// a browser will display.
-function unconfigured(plan: string): Response {
-  console.error(`No Polar product id configured for plan "${plan}"`);
+/*
+ * Every way this deployment can be misconfigured ends here, so the body a browser displays has
+ * one owner and one wording. The detail goes to the log, never into the response.
+ */
+function misconfigured(detail: string): Response {
+  console.error(detail);
   return new Response("That plan is unavailable right now.", { status: 500 });
 }
+
+const unconfigured = (plan: string) => misconfigured(`No Polar product id configured for plan "${plan}"`);
 
 /*
  * Polar keeps a subscription that is only *scheduled* to cancel inside activeSubscriptions,
@@ -87,7 +80,7 @@ async function applyUpdate(deps: BillingDeps, id: string, update: SubscriptionUp
     if (polarStatusCode(error) === 403) return new Response(ALREADY_ENDED, { status: 409 });
     throw error;
   }
-  return seeOther(UPDATED);
+  return seeOther(ACCOUNT_UPDATED);
 }
 
 export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<Response> {
@@ -125,25 +118,21 @@ export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<
    * and ensureProvisioned creates Free again. Do not add a lock or a rollback for it — the
    * window is a few seconds, the repair is already written, and both alternatives are more
    * moving parts than the problem.
+   *
+   * A refusal — POLAR_PRODUCT_FREE pointed at a paid product — stops the purchase here. The
+   * account still holds that subscription, so Polar would refuse the Subscribe step anyway,
+   * and a readable 500 beats selling a checkout page that cannot complete.
    */
-  /*
-   * "refused-not-free" is POLAR_PRODUCT_FREE pointed at a paid product. Refusing to revoke is
-   * right — no configuration typo may cancel a subscription somebody is paying for — but it
-   * also means the account still holds one, so Polar would refuse the Subscribe step and the
-   * checkout URL would lead nowhere. Stopping here with a readable 500 beats selling a page
-   * that cannot work. A revoke that *fails* still throws, and still propagates.
-   */
-  if ((await revokeFreeSubscription(deps.polar, subscriptions, deps.products)) === "refused-not-free") {
-    console.error(
+  if (!(await revokeFreeSubscription(deps.polar, subscriptions, deps.products))) {
+    return misconfigured(
       `POLAR_PRODUCT_FREE points at a subscription that costs money for customer ${deps.userId}; refusing to revoke it for a checkout`,
     );
-    return new Response("That plan is unavailable right now.", { status: 500 });
   }
 
   const checkout = await deps.polar.checkouts.create({
     products: [productId],
     externalCustomerId: deps.userId,
-    successUrl: `${deps.origin}${UPDATED}`,
+    successUrl: `${deps.origin}${ACCOUNT_UPDATED}`,
   });
   return seeOther(checkout.url);
 }
@@ -160,26 +149,17 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
   }
 
   /*
-   * Everything below assumes the subscription is still renewing, so a pending cancellation is
-   * answered first — before Polar has to 403, so the answer can say what to do about it.
-   *
-   * Down to Free is the one case that is not an error: the account is already going there, so
-   * asking again is a no-op and gets the same redirect a successful change gets. Falling
-   * through instead is what produced the worst message in this file — Polar 403s, applyUpdate
-   * maps that to ALREADY_ENDED, and a customer who still has paid access until the period end
-   * is told their subscription has ended and to start a new one.
-   */
-  if (current.subscription.cancelAtPeriodEnd) {
-    if (target === "free") return seeOther(UPDATED);
-    return new Response(SCHEDULED_TO_CANCEL, { status: 409 });
-  }
-
-  /*
    * Down to Free is a cancellation of the paid subscription at the end of the period the
    * customer has already paid for — never a revoke, which would end it immediately and take
    * away access they bought. There is no move-the-product-to-free alternative: that call
    * returns 200 and silently does nothing, measured by re-fetching the subscription and
    * finding it unchanged.
+   *
+   * Which makes it idempotent, and that is why it is answered above the pending-cancellation
+   * guard rather than inside it: a subscription already scheduled to end is in the state this
+   * request is asking for. Falling through produced the worst message in this file — Polar
+   * 403s, applyUpdate maps that to ALREADY_ENDED, and a customer who still has paid access
+   * until the period end is told their subscription has ended and to start a new one.
    *
    * Landing on Free is *not* automatic. When the paid subscription lapses the customer holds
    * no subscription at all, and Free is re-created by ensureProvisioned on their next visit.
@@ -188,7 +168,15 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
    * customer.
    */
   if (target === "free") {
-    return applyUpdate(deps, current.subscription.id, { cancelAtPeriodEnd: true });
+    return current.subscription.cancelAtPeriodEnd
+      ? seeOther(ACCOUNT_UPDATED)
+      : applyUpdate(deps, current.subscription.id, { cancelAtPeriodEnd: true });
+  }
+
+  // Every other target is a real change, and Polar refuses those while a cancellation is
+  // pending. Asked before it has to 403, so the answer can say what to do about it.
+  if (current.subscription.cancelAtPeriodEnd) {
+    return new Response(SCHEDULED_TO_CANCEL, { status: 409 });
   }
 
   const productId = productIdForPlan(target, deps.products);

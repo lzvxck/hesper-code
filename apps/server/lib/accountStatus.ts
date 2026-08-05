@@ -73,7 +73,16 @@ export async function upsertAccountStatus(
    *
    * `amount` is on every subscription payload and owes nothing to this deployment's
    * configuration, so it still identifies the zero-cost tier when the product mapping has
-   * fallen over. It is the same predicate revokeFreeSubscription already trusts.
+   * fallen over.
+   *
+   * The portal's `revokeFreeSubscription` tests the amount too, and it is worth being exact
+   * about how the two differ rather than calling them the same rule. That one has to *select*
+   * a subscription to destroy, so it finds it by product mapping and treats a non-zero amount
+   * as a veto. This one only has to *classify* an event that already arrived, so it starts
+   * from the amount and treats a paid label as a veto. Neither is derived from the other, and
+   * they are deliberately not shared: a selector and a classifier that happen to mention the
+   * same field are not one predicate, and merging them would put the product mapping — the
+   * thing this branch exists to stop depending on — back into the classifier.
    *
    * The plan check is not redundant with it, and this is the part that is *not* measured: what
    * Polar reports in `amount` for a discounted, trialing or zero-priced paid subscription has

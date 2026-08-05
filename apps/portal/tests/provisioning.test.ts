@@ -158,16 +158,9 @@ describe("ensureProvisioned", () => {
   });
 
   /*
-   * The row is written by the webhook, asynchronously, while a plan change answers 303 to this
-   * page immediately. So right after a change the row still describes the *previous* state,
-   * and it is active and mapped, which is precisely the shape the fast path trusts — its three
-   * guards cannot see a stale paid-to-paid row, because a stale one looks exactly like a
-   * current one.
-   *
-   * Left alone, a customer who just downgraded lands on "You're on Pro" with no end date and
-   * no Resume: the cancellation they just made appears not to have happened. Coming back from
-   * a mutation therefore says so, and that resolves from Polar, which is authoritative and has
-   * already committed the change.
+   * The staleness window provisioning.ts describes: a stale active row is the exact shape the
+   * fast path trusts, so left alone a customer who just downgraded lands on "You're on Pro"
+   * with no end date and no Resume, as though the cancellation had not happened.
    */
   test("ignores the stored row entirely when the caller has just changed plan", async () => {
     const { client: supabase, filters } = fakeSupabase({ plan: "pro", subscription_status: "active" });
@@ -201,6 +194,21 @@ describe("ensureProvisioned", () => {
     expect(calls.some((call) => call.method === "subscriptions.create")).toBe(false);
     expect(claims.size).toBe(0);
     expect(result).toEqual({ plan: "free", endsAt: null });
+  });
+
+  /*
+   * The fallback reads the row the fresh path skipped, so it has to weigh it the same way the
+   * fast path does — a churned row reports the plan the customer used to be on, and returning
+   * it would route them at /api/plan, which cannot revive a canceled subscription. Seeding an
+   * active row here would pass against a fallback that applied no rule at all.
+   */
+  test("does not resurrect a churned row on that fallback", async () => {
+    const { client: supabase } = fakeSupabase({ plan: "pro", subscription_status: "revoked" });
+    const { client: polar } = fakePolar([{ activeSubscriptions: [] }]);
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
+
+    expect(result).toEqual({ plan: null, endsAt: null });
   });
 
   /*
