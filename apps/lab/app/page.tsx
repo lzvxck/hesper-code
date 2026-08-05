@@ -152,7 +152,7 @@ export default function Home() {
               <Reveal
                 key={problem.title}
                 as="li"
-                delay={index * 100}
+                delay={(index % 2) * 100}
                 className="flex h-full flex-col rounded-md border border-ink-hairline p-16 md:p-22"
               >
                 <h3 className="text-[16px] leading-[1.3] font-bold tracking-[-0.3px]">
