@@ -1,9 +1,10 @@
 import type { Polar } from "@polar-sh/sdk";
 import type { CustomerState } from "@polar-sh/sdk/models/components/customerstate";
-import { type Plan, type ProductEnv, productIdForPlan } from "@seri/plans";
+import { type Plan, type ProductEnv, planForProductId, productIdForPlan } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type AccountStatus, readAccountStatus } from "./accountStatus";
-import { getCustomerState } from "./polar";
+import { getCustomerState, getSubscription } from "./polar";
+import type { ScheduledChange } from "./scheduled";
 import { claimProvisioning, completeProvisioning, releaseProvisioning } from "./provisioningClaim";
 import type { SessionUser } from "./session";
 import { holdsOnlyFree, paidSubscription } from "./subscriptions";
@@ -58,10 +59,32 @@ async function createFreeSubscription(deps: ProvisioningDeps, userId: string, fr
  *
  * `plan` is null when Polar shows the account holding only products that are not among the
  * four configured ones — the one case where we genuinely cannot say what they are on.
- * `endsAt` is set only while a paid subscription is scheduled to cancel, and is the date
- * access actually stops.
+ * `scheduled` is whatever Polar has already accepted and will apply later: a cancellation, or
+ * a downgrade that `next_period` proration books rather than performs.
  */
-export type AccountPlan = { plan: Plan | null; endsAt: Date | null };
+export type AccountPlan = { plan: Plan | null; scheduled: ScheduledChange | null };
+
+/*
+ * A cancellation short-circuits, and not only to save the round trip: the two can coexist, and
+ * the cancellation is the one that ends access, so it is what the page reports.
+ *
+ * Otherwise the subscription has to be re-fetched by id, because the customer-state call the
+ * rest of this function lives on does not carry `pending_update`. A pending update with no
+ * product — a seats-only change — or one on a product this deployment cannot name is reported
+ * as nothing scheduled rather than as a destination we would have to invent a label for.
+ */
+async function scheduledChange(
+  deps: ProvisioningDeps,
+  subscription: { id: string; cancelAtPeriodEnd: boolean; currentPeriodEnd: Date },
+): Promise<ScheduledChange | null> {
+  if (subscription.cancelAtPeriodEnd) {
+    return { kind: "ends", plan: "free", at: subscription.currentPeriodEnd };
+  }
+  const pending = (await getSubscription(deps.polar, subscription.id)).pendingUpdate;
+  if (!pending?.productId) return null;
+  const plan = planForProductId(pending.productId, deps.products);
+  return plan ? { kind: "changes", plan, at: pending.appliesAt } : null;
+}
 
 /*
  * What a stored row is worth, in one place, because it is asked twice and the two answers must
@@ -104,7 +127,7 @@ export async function ensureProvisioned(
    * mention of it elsewhere points back here.
    */
   const cached = fresh ? null : storedPlan(await readAccountStatus(deps.supabase, user.userId));
-  if (cached) return { plan: cached, endsAt: null };
+  if (cached) return { plan: cached, scheduled: null };
 
   const freeProductId = productIdForPlan("free", deps.products);
   if (!freeProductId) throw new Error("POLAR_PRODUCT_FREE is not set");
@@ -125,15 +148,14 @@ export async function ensureProvisioned(
    */
   const paid = paidSubscription(subscriptions, deps.products);
   if (paid) {
-    const { cancelAtPeriodEnd, currentPeriodEnd } = paid.subscription;
-    return { plan: paid.plan, endsAt: cancelAtPeriodEnd ? currentPeriodEnd : null };
+    return { plan: paid.plan, scheduled: await scheduledChange(deps, paid.subscription) };
   }
 
   // Active, but not on something we can fully account for. Adding a Free subscription on
   // top of a product we cannot identify risks charging twice, so report the uncertainty
   // rather than write — the same predicate createCheckout refuses on.
   if (subscriptions.length > 0) {
-    return { plan: holdsOnlyFree(subscriptions, deps.products) ? "free" : null, endsAt: null };
+    return { plan: holdsOnlyFree(subscriptions, deps.products) ? "free" : null, scheduled: null };
   }
 
   /*
@@ -149,7 +171,7 @@ export async function ensureProvisioned(
    * below, which stays reachable for every load that is not `fresh`.
    */
   if (fresh) {
-    return { plan: storedPlan(await readAccountStatus(deps.supabase, user.userId)), endsAt: null };
+    return { plan: storedPlan(await readAccountStatus(deps.supabase, user.userId)), scheduled: null };
   }
 
   /*
@@ -174,15 +196,14 @@ export async function ensureProvisioned(
     const raced = await getCustomerState(deps.polar, user.userId);
     const racedPaid = paidSubscription(raced?.activeSubscriptions ?? [], deps.products);
     if (racedPaid) {
-      const { cancelAtPeriodEnd, currentPeriodEnd } = racedPaid.subscription;
-      return { plan: racedPaid.plan, endsAt: cancelAtPeriodEnd ? currentPeriodEnd : null };
+      return { plan: racedPaid.plan, scheduled: await scheduledChange(deps, racedPaid.subscription) };
     }
-    return { plan: "free", endsAt: null };
+    return { plan: "free", scheduled: null };
   }
 
   await createFreeSubscription(deps, user.userId, freeProductId);
 
   // Returned rather than re-read: the webhook that writes the row has not necessarily
   // arrived yet, and only later visits depend on it.
-  return { plan: "free", endsAt: null };
+  return { plan: "free", scheduled: null };
 }

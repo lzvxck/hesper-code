@@ -82,13 +82,13 @@ export default async function AccountPage({
 }) {
   const user = await getSessionUser();
   const fresh = isFreshLoad(await searchParams);
-  const { plan, endsAt } = await ensureProvisioned(
+  const { plan, scheduled } = await ensureProvisioned(
     { supabase: getSupabaseClient(), polar: getPolarClient(), products: process.env },
     user,
     { fresh },
   );
   if (needsMarkerlessReload(fresh, plan)) redirect("/");
-  const cards = planCards(plan, endsAt, formatDate);
+  const cards = planCards(plan, scheduled, formatDate);
 
   /*
    * Three states, one layout. What varies above the ladder is the heading, the paragraph and
@@ -110,12 +110,17 @@ export default async function AccountPage({
           blurb:
             "Your subscription is still active and nothing has changed about it, but it is on a product that has been retired, so it cannot be switched from here. Manage billing has your invoices and can cancel it; after that you'll land back on Free and can pick a current plan.",
         }
-      : endsAt
+      : scheduled?.kind === "ends"
         ? {
-            heading: `${TIER_NAME[plan]} until ${formatDate(endsAt)}, then Free.`,
+            heading: `${TIER_NAME[plan]} until ${formatDate(scheduled.at)}, then Free.`,
             blurb:
               "Nothing more will be charged. You keep everything you have paid for until then, and you will move to Free automatically — there is nothing to do. Resume if you would rather keep it, or to change plan: switching is refused while a cancellation is pending.",
           }
+        : scheduled
+          ? {
+              heading: `${TIER_NAME[plan]} until ${formatDate(scheduled.at)}, then ${TIER_NAME[scheduled.plan]}.`,
+              blurb: `You keep ${TIER_NAME[plan]} for the period you have already paid for, and move to ${TIER_NAME[scheduled.plan]} on ${formatDate(scheduled.at)} — nothing is charged in between. Pick another plan to change where you land, or ${TIER_NAME[plan]} again to call the change off.`,
+            }
         : {
             heading: `You're on ${TIER_NAME[plan]}.`,
             blurb:
@@ -131,7 +136,7 @@ export default async function AccountPage({
           why the previous copy telling the customer to look there could not be followed. It
           sits above the ladder because while a cancellation is pending it is the only action
           on this page that leads anywhere. */}
-      {endsAt && plan !== null && (
+      {scheduled?.kind === "ends" && plan !== null && (
         <form action="/api/resume" method="post" className="mt-29 md:mt-34">
           <Button type="submit">{`Resume ${TIER_NAME[plan]}`}</Button>
         </form>
@@ -209,8 +214,8 @@ export default async function AccountPage({
                       `peer-checked:` compiles to a sibling combinator and would silently never
                       match from inside a wrapper. */}
                   <div className="relative mt-11 peer-checked:hidden">
-                    <Button asChild variant="outline" size="sm">
-                      <label htmlFor={`plan-${card.plan}`}>Choose plan</label>
+                    <Button asChild variant={card.current ? "onInk" : "outline"} size="sm">
+                      <label htmlFor={`plan-${card.plan}`}>{card.label}</label>
                     </Button>
                   </div>
                   <div className="relative mt-11 hidden peer-checked:block">
@@ -227,7 +232,7 @@ export default async function AccountPage({
                  */
                 <div className="relative mt-11">
                   <Button disabled size="sm" variant={card.current ? "onInk" : "outline"}>
-                    {card.note ?? "Choose plan"}
+                    {card.label}
                   </Button>
                 </div>
               )}

@@ -1,5 +1,6 @@
 import { Polar } from "@polar-sh/sdk";
 import type { CustomerState } from "@polar-sh/sdk/models/components/customerstate";
+import type { Subscription } from "@polar-sh/sdk/models/components/subscription";
 
 let client: Polar | undefined;
 
@@ -30,4 +31,16 @@ export async function getCustomerState(polar: Polar, userId: string): Promise<Cu
     if (polarStatusCode(error) === 404) return null;
     throw error;
   }
+}
+
+/*
+ * The full subscription, for the one field `getStateExternal` omits.
+ *
+ * `customers/{id}/state` returns 21 fields per subscription and `pending_update` is not among
+ * them — measured against the sandbox — so a scheduled downgrade is invisible to the call the
+ * page otherwise lives on. This is the second round trip that costs, and it is only made once
+ * a paid subscription has already been found.
+ */
+export async function getSubscription(polar: Polar, id: string): Promise<Subscription> {
+  return polar.subscriptions.get({ id });
 }

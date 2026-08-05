@@ -114,7 +114,11 @@ function polarError(statusCode: number) {
  * create calls fail, which is how both the concurrent-first-visit race and the rejected
  * email are reproduced.
  */
-function fakePolar(states: FakeState[], throwOn?: "customers.create" | "subscriptions.create") {
+function fakePolar(
+  states: FakeState[],
+  throwOn?: "customers.create" | "subscriptions.create",
+  pending: { productId: string; appliesAt: Date } | null = null,
+) {
   const calls: { method: string; args: unknown }[] = [];
   let index = 0;
   const client = {
@@ -132,6 +136,15 @@ function fakePolar(states: FakeState[], throwOn?: "customers.create" | "subscrip
       },
     },
     subscriptions: {
+      /*
+       * `pending_update` is absent from customers/{id}/state, so ensureProvisioned re-fetches
+       * the subscription by id for it. The fake answers with no pending update unless a test
+       * supplies one, which is the ordinary case.
+       */
+      get: (args: { id: string }) => {
+        calls.push({ method: "subscriptions.get", args });
+        return Promise.resolve({ id: args.id, pendingUpdate: pending });
+      },
       create: (args: unknown) => {
         calls.push({ method: "subscriptions.create", args });
         return throwOn === "subscriptions.create"
@@ -170,7 +183,7 @@ describe("ensureProvisioned", () => {
 
     const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
 
-    expect(result.endsAt).toEqual(PERIOD_END);
+    expect(result.scheduled).toEqual({ kind: "ends", plan: "free", at: PERIOD_END });
     expect(calls.some((call) => call.method === "customers.getStateExternal")).toBe(true);
     // "Ignores" as in never asks, not as in reads and discards.
     expect(filters).toEqual([]);
@@ -193,7 +206,7 @@ describe("ensureProvisioned", () => {
 
     expect(calls.some((call) => call.method === "subscriptions.create")).toBe(false);
     expect(claims.size).toBe(0);
-    expect(result).toEqual({ plan: "free", endsAt: null });
+    expect(result).toEqual({ plan: "free", scheduled: null });
   });
 
   /*
@@ -208,7 +221,7 @@ describe("ensureProvisioned", () => {
 
     const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
 
-    expect(result).toEqual({ plan: null, endsAt: null });
+    expect(result).toEqual({ plan: null, scheduled: null });
   });
 
   /*
@@ -291,7 +304,59 @@ describe("ensureProvisioned", () => {
     ]);
 
     expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).plan).toBe("pro");
-    expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal"]);
+    // The second read is the price of `pending_update` not being in the customer-state
+    // payload. Nothing is written, which is what this test is about.
+    expect(calls.map((call) => call.method)).toEqual(["customers.getStateExternal", "subscriptions.get"]);
+  });
+
+  /*
+   * The reported bug: a downgrade between two paid plans looked like nothing happening. Polar
+   * had accepted it — `next_period` proration books the change rather than applying it — but
+   * the customer-state payload the page reads omits `pending_update`, so the page kept saying
+   * "You're on Max" and the click appeared lost.
+   */
+  test("reports a booked downgrade, which only the second read can see", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_paid", "prod_max")] }], undefined, {
+      productId: "prod_pro",
+      appliesAt: PERIOD_END,
+    });
+
+    expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
+      plan: "max",
+      scheduled: { kind: "changes", plan: "pro", at: PERIOD_END },
+    });
+  });
+
+  /*
+   * Both can be true at once, and they say different things: one moves the account, the other
+   * ends it. The cancellation is reported, and it short-circuits — no second read is needed to
+   * learn something that no longer decides anything.
+   */
+  test("prefers a cancellation over a booked downgrade, without the extra read", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar, calls } = fakePolar(
+      [{ activeSubscriptions: [sub("sub_paid", "prod_max", { cancelAtPeriodEnd: true })] }],
+      undefined,
+      { productId: "prod_pro", appliesAt: PERIOD_END },
+    );
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER);
+
+    expect(result.scheduled).toEqual({ kind: "ends", plan: "free", at: PERIOD_END });
+    expect(calls.some((call) => call.method === "subscriptions.get")).toBe(false);
+  });
+
+  // A product this deployment cannot name — a rotated id, or a seats-only change carrying no
+  // product at all. Reporting a destination would mean inventing a label for it.
+  test("reports nothing scheduled when the pending product cannot be named", async () => {
+    const { client: supabase } = fakeSupabase(null);
+    const { client: polar } = fakePolar([{ activeSubscriptions: [sub("sub_paid", "prod_max")] }], undefined, {
+      productId: "prod_from_another_environment",
+      appliesAt: PERIOD_END,
+    });
+
+    expect((await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).scheduled).toBeNull();
   });
 
   /*
@@ -305,7 +370,7 @@ describe("ensureProvisioned", () => {
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "free",
-      endsAt: null,
+      scheduled: null,
     });
     expect(calls.map((call) => call.method)).toEqual([
       "customers.getStateExternal",
@@ -350,7 +415,7 @@ describe("ensureProvisioned", () => {
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "pro",
-      endsAt: PERIOD_END,
+      scheduled: { kind: "ends", plan: "free", at: PERIOD_END },
     });
   });
 
@@ -360,7 +425,7 @@ describe("ensureProvisioned", () => {
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "pro",
-      endsAt: null,
+      scheduled: null,
     });
   });
 
@@ -472,6 +537,9 @@ describe("ensureProvisioned under concurrent renders", () => {
         create: () => Promise.resolve({ id: "cus_1" }),
       },
       subscriptions: {
+        // Nothing scheduled: these tests are about how many subscriptions get created, not
+        // about what is booked against them.
+        get: (args: { id: string }) => Promise.resolve({ id: args.id, pendingUpdate: null }),
         create: () => {
           creates += 1;
           return Promise.resolve({ id: `sub_${creates}` });
@@ -507,7 +575,7 @@ describe("ensureProvisioned under concurrent renders", () => {
 
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "free",
-      endsAt: null,
+      scheduled: null,
     });
     expect(creates()).toBe(0);
   });

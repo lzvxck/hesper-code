@@ -189,8 +189,14 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
    * already paid for — docs-tmp/pricing-tiers.md states that as the product's position, and
    * an immediate negative proration would otherwise open a refund path nothing here has
    * measured.
+   *
+   * Asking for the plan already held is neither: it is how a booked downgrade is called off,
+   * and it has to be invoiced. Measured against the sandbox — the same request with
+   * `next_period` does not clear the pending update, it replaces it with one pointing at the
+   * current product, leaving a subscription that reports a scheduled change to itself.
    */
-  const prorationBehavior = isUpgrade(current.plan, target) ? "invoice" : "next_period";
+  const prorationBehavior =
+    target === current.plan || isUpgrade(current.plan, target) ? "invoice" : "next_period";
   return applyUpdate(deps, current.subscription.id, { productId, prorationBehavior });
 }
 
