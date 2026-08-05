@@ -10,7 +10,7 @@ export default async function UsagePage() {
   const user = await getSessionUser();
 
   return (
-    <Shell email={user.email}>
+    <Shell email={user.email} current="usage">
       <h1 className="text-[38px] leading-[1.1] font-bold tracking-[-1px] md:text-display">Usage</h1>
       <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">
         Per-session token and spend detail lives here. It is not built yet — Manage billing has your
