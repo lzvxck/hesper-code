@@ -8,6 +8,10 @@ import { endSession } from "@/lib/actions";
  * Without this a Polar failure — a 422 for an undeliverable email is the likely one, since
  * a WorkOS Staging tenant is full of addresses Polar will not accept — renders as an
  * unstyled 500 with no way to sign out and nothing to do but close the tab.
+ *
+ * It cannot share app/Shell.tsx, which is where the other signed-in pages put Sign out (top
+ * right, next to the email): `reset` makes this a client component and Shell is a server one.
+ * So the same control lives in two places by necessity — move it in one and check the other.
  */
 export default function AccountError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
