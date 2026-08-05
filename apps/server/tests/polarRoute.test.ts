@@ -102,7 +102,7 @@ describe("toPlan", () => {
 
 describe("toAccountStatusParams", () => {
   test("builds upsert params when externalId is present", () => {
-    const params = toAccountStatusParams(fakeCustomer({}), "active", "pro");
+    const params = toAccountStatusParams(fakeCustomer({}), "active", "pro", 2000);
 
     expect(params).toEqual({
       workosUserId: "user_1",
@@ -110,26 +110,26 @@ describe("toAccountStatusParams", () => {
       polarCustomerId: "cus_1",
       status: "active",
       plan: "pro",
+      amount: 2000,
     });
   });
 
   test("returns null when externalId is missing", () => {
-    expect(toAccountStatusParams(fakeCustomer({ externalId: null }), "active", "pro")).toBeNull();
+    expect(toAccountStatusParams(fakeCustomer({ externalId: null }), "active", "pro", 2000)).toBeNull();
   });
 
   test("returns null when externalId is undefined", () => {
-    expect(toAccountStatusParams(fakeCustomer({ externalId: undefined }), "active", "pro")).toBeNull();
+    expect(toAccountStatusParams(fakeCustomer({ externalId: undefined }), "active", "pro", 2000)).toBeNull();
   });
 });
 
-// upsertAccountStatus reads the existing row before writing, so the fake has to answer a
-// select as well. No stored row here — these tests are about what gets written, not about
-// the free-over-paid protection, which accountStatus.test.ts covers.
+// Every payload here costs money, so upsertAccountStatus takes its unconditional path and a
+// bare upsert is all the fake needs. These tests are about what gets written; the free-tier
+// ordering guard and its conditional update are accountStatus.test.ts's subject.
 function fakeSupabase() {
   const calls: { row: Record<string, unknown> }[] = [];
   const client = {
     from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }),
       upsert: (row: Record<string, unknown>) => {
         calls.push({ row });
         return Promise.resolve({ data: null, error: null });
@@ -141,13 +141,13 @@ function fakeSupabase() {
 
 function canceledPayload(productId: string): WebhookSubscriptionCanceledPayload {
   return {
-    data: { status: "active", productId, customer: fakeCustomer({}) },
+    data: { status: "active", productId, amount: 2000, customer: fakeCustomer({}) },
   } as unknown as WebhookSubscriptionCanceledPayload;
 }
 
 function updatedPayload(status: string, cancelAtPeriodEnd: boolean): WebhookSubscriptionUpdatedPayload {
   return {
-    data: { status, cancelAtPeriodEnd, productId: "prod_pro", customer: fakeCustomer({}) },
+    data: { status, cancelAtPeriodEnd, productId: "prod_pro", amount: 2000, customer: fakeCustomer({}) },
   } as unknown as WebhookSubscriptionUpdatedPayload;
 }
 

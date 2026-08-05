@@ -12,6 +12,11 @@ export type AccountStatusUpsertParams = {
   polarCustomerId: string;
   status: SubscriptionStatus;
   plan: Plan | null;
+  /**
+   * The subscription's own amount, in cents. Zero identifies the free tier without consulting
+   * this deployment's product configuration — see the ordering guard below.
+   */
+  amount: number;
 };
 
 /*
@@ -57,9 +62,24 @@ export async function upsertAccountStatus(
     updated_at: new Date().toISOString(),
   };
 
-  // Paid — and an unresolved plan, which is not a free product and so is not what this rule
-  // guards against — always wins, and needs no condition.
-  if (params.plan !== "free") {
+  /*
+   * Keyed on the amount, not on the plan, and that distinction is the whole guard.
+   *
+   * `plan` stops being trustworthy in exactly the situation this protects against: `toPlan()`
+   * returns null whenever a `POLAR_PRODUCT_*` is unset or has been rotated, so the free
+   * subscription's revoke — the one createCheckout fires on the way into an upgrade — stops
+   * looking free and takes the unconditional branch straight over a paying customer's row.
+   * A rule that fails open on misconfiguration is not a rule.
+   *
+   * `amount` is on every subscription payload and owes nothing to this deployment's
+   * configuration, so it still identifies the zero-cost tier when the product mapping has
+   * fallen over. It is the same predicate revokeFreeSubscription already trusts.
+   *
+   * What this still cannot repair is a deployment with *no* product ids at all: every row is
+   * then written with plan null, so `plan.is.null` matches and the filter admits everything.
+   * That is a configuration alarm, not a race — see the deploy runbook.
+   */
+  if (params.amount !== 0) {
     const { error } = await supabase
       .from("account_status")
       .upsert(row, { onConflict: "workos_user_id" });
