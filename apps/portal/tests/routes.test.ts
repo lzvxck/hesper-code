@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Polar } from "@polar-sh/sdk";
 import { changePlan, createCheckout, resumePaidPlan } from "../lib/billing";
+import { USAGE } from "../lib/routes";
 import type { ActiveSubscription } from "../lib/subscriptions";
 
 const PRODUCTS = {
@@ -61,6 +62,12 @@ function fakePolar(
 }
 
 const deps = (polar: Polar) => ({ polar, products: PRODUCTS, userId: SESSION_USER_ID, origin: ORIGIN });
+
+// The button and the page it reaches name the same symbol rather than agreeing on a string,
+// for the reason ACCOUNT_UPDATED is a constant: a rename that misses one end still compiles.
+test("USAGE is the path app/usage is served from", () => {
+  expect(USAGE).toBe("/usage");
+});
 
 describe("createCheckout", () => {
   test("bills the session's account, and sends the customer back here afterwards", async () => {
