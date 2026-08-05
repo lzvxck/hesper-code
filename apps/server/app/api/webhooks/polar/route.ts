@@ -1,4 +1,5 @@
 import { Webhooks } from "@polar-sh/nextjs";
+import type { Subscription } from "@polar-sh/sdk/models/components/subscription";
 import type { SubscriptionCustomer } from "@polar-sh/sdk/models/components/subscriptioncustomer";
 import type { WebhookSubscriptionActivePayload } from "@polar-sh/sdk/models/components/webhooksubscriptionactivepayload";
 import type { WebhookSubscriptionCanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptioncanceledpayload";
@@ -67,6 +68,7 @@ export function toAccountStatusParams(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
   plan: Plan | null,
+  amount: number,
 ): AccountStatusUpsertParams | null {
   if (!customer.externalId) return null;
   return {
@@ -75,16 +77,24 @@ export function toAccountStatusParams(
     polarCustomerId: customer.id,
     status,
     plan,
+    amount,
   };
 }
 
-function upsertFromCustomer(
-  customer: SubscriptionCustomer,
+/*
+ * Takes the subscription rather than three fields off it, because the amount now travels with
+ * the customer and the product id: it is what tells account_status which event is about the
+ * free tier when the product mapping cannot.
+ */
+type SubscriptionFacts = Pick<Subscription, "customer" | "productId" | "amount">;
+
+function upsertFromSubscription(
+  subscription: SubscriptionFacts,
   status: SubscriptionStatus,
-  productId: string,
   supabase: SupabaseClient = getSupabaseClient(),
 ): Promise<void> {
-  const params = toAccountStatusParams(customer, status, toPlan(productId));
+  const { customer, productId, amount } = subscription;
+  const params = toAccountStatusParams(customer, status, toPlan(productId), amount);
   if (!params) {
     console.warn(`Polar webhook: customer ${customer.id} has no externalId, skipping upsert`);
     return Promise.resolve();
@@ -119,7 +129,7 @@ export function syncSubscription(
     return Promise.resolve();
   }
   const status = mapped === "active" && payload.data.cancelAtPeriodEnd ? "canceled" : mapped;
-  return upsertFromCustomer(payload.data.customer, status, payload.data.productId, supabase);
+  return upsertFromSubscription(payload.data, status, supabase);
 }
 
 // Polar keeps `data.status` as "active" while a cancellation is only scheduled
@@ -129,7 +139,7 @@ export function onSubscriptionCanceled(
   payload: WebhookSubscriptionCanceledPayload,
   supabase?: SupabaseClient,
 ): Promise<void> {
-  return upsertFromCustomer(payload.data.customer, "canceled", payload.data.productId, supabase);
+  return upsertFromSubscription(payload.data, "canceled", supabase);
 }
 
 export const POST = Webhooks({
@@ -140,5 +150,5 @@ export const POST = Webhooks({
   onSubscriptionUncanceled: syncSubscription,
   onSubscriptionUpdated: syncSubscription,
   onSubscriptionRevoked: (payload: WebhookSubscriptionRevokedPayload) =>
-    upsertFromCustomer(payload.data.customer, "revoked", payload.data.productId),
+    upsertFromSubscription(payload.data, "revoked"),
 });

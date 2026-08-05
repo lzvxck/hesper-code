@@ -2,7 +2,7 @@ import type { Polar } from "@polar-sh/sdk";
 import type { CustomerState } from "@polar-sh/sdk/models/components/customerstate";
 import { type Plan, type ProductEnv, productIdForPlan } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { readAccountStatus } from "./accountStatus";
+import { type AccountStatus, readAccountStatus } from "./accountStatus";
 import { getCustomerState } from "./polar";
 import { claimProvisioning, completeProvisioning, releaseProvisioning } from "./provisioningClaim";
 import type { SessionUser } from "./session";
@@ -63,26 +63,48 @@ async function createFreeSubscription(deps: ProvisioningDeps, userId: string, fr
  */
 export type AccountPlan = { plan: Plan | null; endsAt: Date | null };
 
+/*
+ * What a stored row is worth, in one place, because it is asked twice and the two answers must
+ * not differ.
+ *
+ * All three conditions are load-bearing. A revoked or past_due row would otherwise report the
+ * plan the customer used to be on and route them at /api/plan, which cannot revive a canceled
+ * subscription — leaving a churned customer with no way back to paying. And a row whose `plan`
+ * is null says nothing at all; a deployment whose webhook predates that column writes exactly
+ * that, and believing it would send a paying customer to checkout for a second subscription.
+ */
+function storedPlan(row: AccountStatus | null): Plan | null {
+  return row?.status === "active" && row.plan ? row.plan : null;
+}
+
 /**
  * Establishes a Polar customer and a Free subscription for a session, and reports the plan
  * that is now in force.
+ *
+ * `fresh` means the caller has just changed the subscription, so the cached row is not
+ * consulted for the answer — Polar is. It still gets read, under `storedPlan`'s rule, if Polar
+ * turns out to have nothing to say.
  */
-export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUser): Promise<AccountPlan> {
+export async function ensureProvisioned(
+  deps: ProvisioningDeps,
+  user: SessionUser,
+  { fresh = false }: { fresh?: boolean } = {},
+): Promise<AccountPlan> {
   /*
-   * Fast path: in steady state a page load reaches Supabase and stops there. All three
-   * conditions are load-bearing. A revoked or past_due row would otherwise report the plan
-   * the customer used to be on and route them at /api/plan, which cannot revive a canceled
-   * subscription — leaving a churned customer with no way back to paying. And a row whose
-   * `plan` is null says nothing at all; a deployment whose webhook predates that column
-   * writes exactly that, and believing it would send a paying customer to checkout for a
-   * second subscription.
+   * Fast path: in steady state a page load reaches Supabase and stops there.
    *
-   * A scheduled cancellation cannot hide behind this path: the webhook writes "canceled" the
-   * moment one is scheduled, so such an account always falls through to Polar, which is the
-   * only place the end date exists.
+   * A scheduled cancellation cannot hide behind it: the webhook writes "canceled" the moment
+   * one is scheduled, so such an account always falls through to Polar, which is the only
+   * place the end date exists.
+   *
+   * What `storedPlan`'s conditions cannot catch is *staleness*. The row is written by the
+   * webhook asynchronously, while a plan change answers 303 to this page immediately — so for
+   * a moment after any change the row still describes the previous state, and a stale active
+   * row is indistinguishable from a current one. This is the one race in this file, and every
+   * mention of it elsewhere points back here.
    */
-  const row = await readAccountStatus(deps.supabase, user.userId);
-  if (row?.status === "active" && row.plan) return { plan: row.plan, endsAt: null };
+  const cached = fresh ? null : storedPlan(await readAccountStatus(deps.supabase, user.userId));
+  if (cached) return { plan: cached, endsAt: null };
 
   const freeProductId = productIdForPlan("free", deps.products);
   if (!freeProductId) throw new Error("POLAR_PRODUCT_FREE is not set");
@@ -112,6 +134,22 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
   // rather than write — the same predicate createCheckout refuses on.
   if (subscriptions.length > 0) {
     return { plan: holdsOnlyFree(subscriptions, deps.products) ? "free" : null, endsAt: null };
+  }
+
+  /*
+   * Nothing visible, on a load that follows a change this customer just made — most often the
+   * return from a completed checkout, where Polar redirects on confirmation and the new
+   * subscription is not guaranteed to be readable yet.
+   *
+   * Provisioning Free here would be the worst possible reading of that silence: the customer
+   * has just paid, Polar permits one active subscription per customer, and the free one would
+   * either lose the race or displace what they bought. So this falls back to the row it
+   * skipped — under the same rule the fast path applies to it, never a laxer one — and stops.
+   * It is a moment, and the next ordinary load resolves it properly, including the repair
+   * below, which stays reachable for every load that is not `fresh`.
+   */
+  if (fresh) {
+    return { plan: storedPlan(await readAccountStatus(deps.supabase, user.userId)), endsAt: null };
   }
 
   /*

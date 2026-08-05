@@ -31,12 +31,12 @@ export type PlanCard = {
  * Visible is not the same as actionable, and the two states that suppress every button do it
  * for different reasons:
  *
- *   - Scheduled cancellation. `billing.ts` refuses both mechanisms while one is pending —
- *     changePlan answers 409 SCHEDULED_TO_CANCEL on `cancelAtPeriodEnd`, and createCheckout
- *     answers 409 SCHEDULED_TO_CANCEL_CHECKOUT rather than open a second subscription. So the
- *     cards are shown and none of them is selectable; Resume, above the ladder, is the one
- *     action that leads anywhere. Offering a Switch here would render a button whose only
- *     possible answer is an error page.
+ *   - Scheduled cancellation. `billing.ts` refuses every real change while one is pending —
+ *     changePlan answers 409 SCHEDULED_TO_CANCEL, and createCheckout answers 409
+ *     SCHEDULED_TO_CANCEL_CHECKOUT rather than open a second subscription. So the cards are
+ *     shown and none of them is selectable; Resume, above the ladder, is the one action that
+ *     leads anywhere. Offering a Switch here would render a button whose only possible answer
+ *     is an error page.
  *   - An unrecognized plan. The retired-product case: createCheckout refuses an account
  *     already holding something paid, and changePlan cannot identify what to change.
  *

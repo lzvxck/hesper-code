@@ -1,5 +1,6 @@
 import { INCLUDED_SPEND_RATIO, PLAN_MONTHLY_USD, type Plan, isPaidPlan } from "@seri/plans";
 import { Button, SiteFooter, SiteNav } from "@seri/ui";
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { planCards } from "@/lib/accountView";
@@ -7,6 +8,7 @@ import { endSession } from "@/lib/actions";
 import { getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
+import { isFreshLoad, needsMarkerlessReload } from "@/lib/routes";
 import { getSupabaseClient } from "@/lib/supabase";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
@@ -68,12 +70,24 @@ function Shell({ email, children }: { email: string; children: ReactNode }) {
   );
 }
 
-export default async function AccountPage() {
+/*
+ * The marker is a hint about freshness and nothing else — no account, plan or amount is ever
+ * taken from the request, so the worst a forged one can do is make the page ask Polar. What it
+ * means, and why the stored row cannot be trusted right after a change, is in provisioning.ts.
+ */
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await getSessionUser();
+  const fresh = isFreshLoad(await searchParams);
   const { plan, endsAt } = await ensureProvisioned(
     { supabase: getSupabaseClient(), polar: getPolarClient(), products: process.env },
     user,
+    { fresh },
   );
+  if (needsMarkerlessReload(fresh, plan)) redirect("/");
   const cards = planCards(plan, endsAt, formatDate);
 
   /*
@@ -178,17 +192,45 @@ export default async function AccountPage() {
                 {tier.detail}
               </p>
 
-              {card.note ? (
-                <p
-                  className={`mt-11 font-mono uppercase tracking-[1px] ${card.current ? "text-on-ink-subtle" : "text-ink-subtle"}`}
-                >
-                  {card.note}
-                </p>
-              ) : card.selectable ? (
-                <div className="relative mt-11 hidden peer-checked:block">
-                  <Button type="submit">{`Switch to ${tier.name}`}</Button>
+              {/*
+               * Every card ends in a control at the same place, so the four read as one row
+               * rather than as a grid with a button in it somewhere.
+               *
+               * On a card that is not the chosen one, "Choose plan" is a *label*, not a submit.
+               * That is not decoration: a visible submit on an unchosen card would post
+               * whichever radio happened to be checked, so clicking Max while Ultra was
+               * selected would buy Ultra. The label checks its own radio, and the real submit
+               * exists only on the card that is then checked — the same trick as the card-wide
+               * overlay, which is why this still needs no client JavaScript.
+               */}
+              {card.selectable ? (
+                <>
+                  {/* Both wrappers are siblings of the radio, not children of one, because
+                      `peer-checked:` compiles to a sibling combinator and would silently never
+                      match from inside a wrapper. */}
+                  <div className="relative mt-11 peer-checked:hidden">
+                    <Button asChild variant="outline" size="sm">
+                      <label htmlFor={`plan-${card.plan}`}>Choose plan</label>
+                    </Button>
+                  </div>
+                  <div className="relative mt-11 hidden peer-checked:block">
+                    <Button type="submit" size="sm">
+                      Subscribe
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                /*
+                 * Inert, and it says why rather than being blank: the plan held now, the date
+                 * one ends or begins, or — in the states where nothing can be switched at all —
+                 * the same "Choose plan" the others offer, visibly unavailable.
+                 */
+                <div className="relative mt-11">
+                  <Button disabled size="sm" variant={card.current ? "onInk" : "outline"}>
+                    {card.note ?? "Choose plan"}
+                  </Button>
                 </div>
-              ) : null}
+              )}
             </div>
           );
         })}

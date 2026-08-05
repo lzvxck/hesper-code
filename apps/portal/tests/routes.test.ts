@@ -75,7 +75,7 @@ describe("createCheckout", () => {
       args: {
         products: ["prod_max"],
         externalCustomerId: SESSION_USER_ID,
-        successUrl: `${ORIGIN}/`,
+        successUrl: `${ORIGIN}/?updated=1`,
       },
     });
   });
@@ -109,15 +109,22 @@ describe("createCheckout", () => {
   });
 
   /*
-   * The backstop for POLAR_PRODUCT_FREE pointed at a paid product. Nothing may cancel a
-   * subscription somebody is paying for in order to sell them another one.
+   * The backstop for POLAR_PRODUCT_FREE pointed at a paid product, and the whole of it: nothing
+   * may cancel a subscription somebody is paying for in order to sell them another, and
+   * refusing to revoke is only half an answer — the account still holds that subscription, so
+   * Polar would refuse the Subscribe step and the checkout URL would lead nowhere.
    */
-  test("never revokes a subscription that costs money, whatever the config calls free", async () => {
+  test("refuses the checkout rather than revoking a subscription that costs money", async () => {
     const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
 
-    await createCheckout(deps(polar), "pro");
+    const response = await createCheckout(deps(polar), "pro");
 
     expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+    expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
+    // A body a browser can display, like every other misconfiguration in this module — not a
+    // raw exception through a route handler that error.tsx does not catch.
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("That plan is unavailable right now.");
   });
 
   // A failed revoke means Polar will refuse the Subscribe step, so handing back a checkout
@@ -179,6 +186,9 @@ describe("changePlan", () => {
     const response = await changePlan(deps(polar), "ultra");
 
     expect(response.status).toBe(303);
+    // Back to the page with the freshness marker: account_status still says "pro" at this
+    // instant, and without it the customer is invoiced for Ultra and shown Pro.
+    expect(response.headers.get("Location")).toBe("/?updated=1");
     expect(calls).toContainEqual({
       method: "subscriptions.update",
       args: {
@@ -199,6 +209,7 @@ describe("changePlan", () => {
     const response = await changePlan(deps(polar), "pro");
 
     expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
     expect(calls).toContainEqual({
       method: "subscriptions.update",
       args: {
@@ -247,6 +258,33 @@ describe("changePlan", () => {
 
     expect(response.status).toBe(409);
     expect(await response.text()).toBe("This plan is scheduled to end. Resume it first, then change plan.");
+    expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
+  });
+
+  /*
+   * Downgrading something already scheduled to end asks for a state it is already in. It used
+   * to fall through to Polar, which answers 403, which this file maps to "This subscription
+   * has already ended. Start a new one to continue." — telling a customer who still has paid
+   * access until the period end to buy a second subscription.
+   *
+   * Reachable with two tabs: downgrade in one, click the Free card in the other before it
+   * re-renders without it.
+   */
+  test("treats a repeat downgrade as a no-op instead of reporting it as ended", async () => {
+    // The 403 Polar really answers here, so the test fails the way the customer met it rather
+    // than on a call count: without the guard this reaches applyUpdate and comes back 409
+    // "This subscription has already ended. Start a new one to continue."
+    const alreadyCanceled = Object.assign(new Error("AlreadyCanceledSubscription"), { statusCode: 403 });
+    const { client: polar, calls } = fakePolar(
+      [sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true })],
+      alreadyCanceled,
+    );
+
+    const response = await changePlan(deps(polar), "free");
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
+    expect(await response.text()).not.toContain("already ended");
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
   });
 
@@ -358,6 +396,7 @@ describe("resumePaidPlan", () => {
     const response = await resumePaidPlan(deps(polar));
 
     expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
     expect(calls).toContainEqual({
       method: "subscriptions.update",
       args: { id: "sub_paid", subscriptionUpdate: { cancelAtPeriodEnd: false } },
@@ -480,7 +519,7 @@ describe("route handlers", () => {
     expect(response.status).toBe(303);
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
-      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
     });
     expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
     expect(JSON.stringify(polarCalls)).not.toContain("prod_ultra");
@@ -544,7 +583,7 @@ describe("route handlers", () => {
     expect(response.status).toBe(303);
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
-      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
     });
     expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
     expect(JSON.stringify(polarCalls)).not.toContain("prod_ultra");
@@ -586,7 +625,7 @@ describe("route handlers", () => {
     expect(JSON.stringify(polarCalls)).not.toContain("attacker.example");
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
-      args: { products: ["prod_pro"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+      args: { products: ["prod_pro"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
     });
   });
 });

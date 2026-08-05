@@ -46,6 +46,7 @@ const FREE_EVENT = {
   polarCustomerId: "cus_free",
   status: "revoked",
   plan: "free",
+  amount: 0,
 } as const;
 
 /*
@@ -86,6 +87,53 @@ describe("upsertAccountStatus free-event protection", () => {
     ]);
   });
 
+  /*
+   * The guard cannot hang off `plan`, because `plan` is exactly what stops being trustworthy
+   * in the situation that needs guarding: `toPlan()` returns null whenever a `POLAR_PRODUCT_*`
+   * is unset or has been rotated, and then the free subscription's revoke — the one
+   * createCheckout fires on the way into an upgrade — no longer looks free. It would take the
+   * unconditional branch and overwrite the paying customer's row.
+   *
+   * `amount` is on every subscription payload and owes nothing to this deployment's
+   * configuration, so it still says "this is the zero-cost tier" when the product mapping has
+   * fallen over. It is the same predicate revokeFreeSubscription already trusts.
+   */
+  test("still conditions the write when the plan could not be resolved", async () => {
+    const { client, upserts, updates } = fakeSupabase();
+
+    await upsertAccountStatus(client, { ...FREE_EVENT, plan: null });
+
+    expect(updates).toHaveLength(1);
+    expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id", ignoreDuplicates: true });
+  });
+
+  // The mirror of it: an unresolved plan on something that costs money is not the free tier,
+  // and must not be held back by a guard meant for the free one.
+  test("writes unconditionally for an unresolved plan that costs money", async () => {
+    const { client, upserts, updates } = fakeSupabase();
+
+    await upsertAccountStatus(client, { ...FREE_EVENT, plan: null, amount: 2000 });
+
+    expect(updates).toEqual([]);
+    expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id" });
+  });
+
+  /*
+   * What Polar reports in `amount` for a discounted, trialing or zero-priced paid subscription
+   * is not established here, and Subscription carries `discount` separately — so a paid
+   * subscription reading 0 is possible. If one did, and only the amount were tested, its
+   * revoke would take the conditional path, fail to match its own active row, and strand a
+   * churned customer as active forever.
+   */
+  test("lets a paid plan through unconditionally even when it costs nothing", async () => {
+    const { client, upserts, updates } = fakeSupabase();
+
+    await upsertAccountStatus(client, { ...FREE_EVENT, plan: "pro", amount: 0 });
+
+    expect(updates).toEqual([]);
+    expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id" });
+  });
+
   test("throws when the conditional update fails", async () => {
     const supabaseError = new Error("write failed");
     const { client } = fakeSupabase(supabaseError);
@@ -95,8 +143,9 @@ describe("upsertAccountStatus free-event protection", () => {
 });
 
 /*
- * Paid wins unconditionally, and so does an unresolved plan: a product id this deployment has
- * no variable for is not a free product, so it is not what the rule guards against.
+ * Anything that costs money wins unconditionally, whether or not its plan could be resolved.
+ * The label is irrelevant here: a non-zero amount is not the free tier, so it is not what the
+ * ordering guard above protects.
  */
 describe("upsertAccountStatus", () => {
   test.each(["pro", "max", "ultra", null] as const)("writes plan %p with no condition", async (plan) => {
@@ -108,6 +157,7 @@ describe("upsertAccountStatus", () => {
       polarCustomerId: "cus_1",
       status: "active",
       plan,
+      amount: 2000,
     });
 
     expect(updates).toEqual([]);
@@ -126,6 +176,7 @@ describe("upsertAccountStatus", () => {
         polarCustomerId: "cus_1",
         status,
         plan: "pro",
+        amount: 2000,
       });
 
       const row = upserts[0]?.row as Record<string, unknown>;
@@ -146,7 +197,8 @@ describe("upsertAccountStatus", () => {
       email: null,
       polarCustomerId: "cus_2",
       status: "active",
-      plan: "free",
+      plan: "pro",
+      amount: 2000,
     });
 
     expect(upserts[0]?.row.email).toBeNull();
@@ -163,6 +215,7 @@ describe("upsertAccountStatus", () => {
         polarCustomerId: "cus_3",
         status: "active",
         plan: "pro",
+        amount: 2000,
       }),
     ).rejects.toThrow(supabaseError);
   });

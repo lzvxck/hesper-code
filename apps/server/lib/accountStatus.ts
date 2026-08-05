@@ -1,4 +1,4 @@
-import { PAID_PLANS, type Plan, type SubscriptionStatus } from "@seri/plans";
+import { PAID_PLANS, type Plan, type SubscriptionStatus, isPaidPlan } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /*
@@ -12,6 +12,11 @@ export type AccountStatusUpsertParams = {
   polarCustomerId: string;
   status: SubscriptionStatus;
   plan: Plan | null;
+  /**
+   * The subscription's own amount, in cents. Zero identifies the free tier without consulting
+   * this deployment's product configuration — see the ordering guard below.
+   */
+  amount: number;
 };
 
 /*
@@ -57,9 +62,45 @@ export async function upsertAccountStatus(
     updated_at: new Date().toISOString(),
   };
 
-  // Paid — and an unresolved plan, which is not a free product and so is not what this rule
-  // guards against — always wins, and needs no condition.
-  if (params.plan !== "free") {
+  /*
+   * Keyed on the amount, not on the plan, and that distinction is the whole guard.
+   *
+   * `plan` stops being trustworthy in exactly the situation this protects against: `toPlan()`
+   * returns null whenever a `POLAR_PRODUCT_*` is unset or has been rotated, so the free
+   * subscription's revoke — the one createCheckout fires on the way into an upgrade — stops
+   * looking free and takes the unconditional branch straight over a paying customer's row.
+   * A rule that fails open on misconfiguration is not a rule.
+   *
+   * `amount` is on every subscription payload and owes nothing to this deployment's
+   * configuration, so it still identifies the zero-cost tier when the product mapping has
+   * fallen over.
+   *
+   * The portal's `revokeFreeSubscription` tests the amount too, and it is worth being exact
+   * about how the two differ rather than calling them the same rule. That one has to *select*
+   * a subscription to destroy, so it finds it by product mapping and treats a non-zero amount
+   * as a veto. This one only has to *classify* an event that already arrived, so it starts
+   * from the amount and treats a paid label as a veto. Neither is derived from the other, and
+   * they are deliberately not shared: a selector and a classifier that happen to mention the
+   * same field are not one predicate, and merging them would put the product mapping — the
+   * thing this branch exists to stop depending on — back into the classifier.
+   *
+   * The plan check is not redundant with it, and this is the part that is *not* measured: what
+   * Polar reports in `amount` for a discounted, trialing or zero-priced paid subscription has
+   * not been established here, and `Subscription` carries `discount` separately, so a paid
+   * subscription reading 0 is possible. Were that to happen with only the amount test, its
+   * revoke would take the conditional path, fail to match its own active row, and strand a
+   * churned customer as active forever. Anything labelled paid therefore wins outright, and
+   * the conditional path is left holding only what is both zero-cost and not a paid tier.
+   *
+   * Two states this still cannot repair, both configuration rather than races, and both in the
+   * deploy runbook. A deployment with *no* product ids writes every row with plan null, so
+   * `plan.is.null` matches and the filter admits everything. And a rotated id puts the paid
+   * label out of reach exactly when the amount test would need it: a zero-amount paid
+   * subscription whose product no longer maps arrives as `plan: null, amount: 0`, takes the
+   * conditional path, fails to match its own active row, and its revoke is dropped. Setting
+   * the product ids correctly is the fix for both; nothing here can substitute for it.
+   */
+  if (params.amount !== 0 || isPaidPlan(params.plan)) {
     const { error } = await supabase
       .from("account_status")
       .upsert(row, { onConflict: "workos_user_id" });

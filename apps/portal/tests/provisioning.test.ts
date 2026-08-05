@@ -158,6 +158,60 @@ describe("ensureProvisioned", () => {
   });
 
   /*
+   * The staleness window provisioning.ts describes: a stale active row is the exact shape the
+   * fast path trusts, so left alone a customer who just downgraded lands on "You're on Pro"
+   * with no end date and no Resume, as though the cancellation had not happened.
+   */
+  test("ignores the stored row entirely when the caller has just changed plan", async () => {
+    const { client: supabase, filters } = fakeSupabase({ plan: "pro", subscription_status: "active" });
+    const { client: polar, calls } = fakePolar([
+      { activeSubscriptions: [sub("sub_1", "prod_pro", { cancelAtPeriodEnd: true })] },
+    ]);
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
+
+    expect(result.endsAt).toEqual(PERIOD_END);
+    expect(calls.some((call) => call.method === "customers.getStateExternal")).toBe(true);
+    // "Ignores" as in never asks, not as in reads and discards.
+    expect(filters).toEqual([]);
+  });
+
+  /*
+   * The return from a completed checkout. Polar redirects on confirmation and the new
+   * subscription is not guaranteed to be readable yet, so `fresh` — which deliberately skips
+   * the cached row — can arrive here seeing nothing at all.
+   *
+   * Provisioning Free would be the worst reading of that silence: the customer has just paid,
+   * Polar permits one active subscription per customer, and the free one would either lose the
+   * race or displace what they bought.
+   */
+  test("never provisions on a fresh load that finds nothing, since the customer may have just paid", async () => {
+    const { client: supabase, claims } = fakeSupabase({ plan: "free", subscription_status: "active" });
+    const { client: polar, calls } = fakePolar([{ activeSubscriptions: [] }]);
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
+
+    expect(calls.some((call) => call.method === "subscriptions.create")).toBe(false);
+    expect(claims.size).toBe(0);
+    expect(result).toEqual({ plan: "free", endsAt: null });
+  });
+
+  /*
+   * The fallback reads the row the fresh path skipped, so it has to weigh it the same way the
+   * fast path does — a churned row reports the plan the customer used to be on, and returning
+   * it would route them at /api/plan, which cannot revive a canceled subscription. Seeding an
+   * active row here would pass against a fallback that applied no rule at all.
+   */
+  test("does not resurrect a churned row on that fallback", async () => {
+    const { client: supabase } = fakeSupabase({ plan: "pro", subscription_status: "revoked" });
+    const { client: polar } = fakePolar([{ activeSubscriptions: [] }]);
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
+
+    expect(result).toEqual({ plan: null, endsAt: null });
+  });
+
+  /*
    * A churned customer whose row still says "pro" would be shown as a paying customer and
    * routed at /api/plan, which cannot revive a canceled subscription — Polar answers 403
    * AlreadyCanceledSubscription. They have to reach checkout, so a non-active row is worth
