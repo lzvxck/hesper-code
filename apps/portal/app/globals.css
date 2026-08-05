@@ -1,0 +1,5 @@
+@import "tailwindcss";
+@import "@seri/ui/styles.css";
+/* Required: without it Tailwind never scans the package and purges every class that
+   only appears inside @seri/ui. */
+@source "../../../packages/ui/src";

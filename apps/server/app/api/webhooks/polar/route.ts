@@ -6,13 +6,16 @@ import type { WebhookSubscriptionCreatedPayload } from "@polar-sh/sdk/models/com
 import type { WebhookSubscriptionRevokedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionrevokedpayload";
 import type { WebhookSubscriptionUncanceledPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionuncanceledpayload";
 import type { WebhookSubscriptionUpdatedPayload } from "@polar-sh/sdk/models/components/webhooksubscriptionupdatedpayload";
+import {
+  type Plan,
+  type ProductEnv,
+  type SubscriptionStatus,
+  missingProductVars,
+  planForProductId,
+} from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "../../../../lib/supabase";
-import {
-  type AccountStatusUpsertParams,
-  type SubscriptionStatus,
-  upsertAccountStatus,
-} from "../../../../lib/accountStatus";
+import { type AccountStatusUpsertParams, upsertAccountStatus } from "../../../../lib/accountStatus";
 
 export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | null {
   switch (polarStatus) {
@@ -28,9 +31,42 @@ export function toSubscriptionStatus(polarStatus: string): SubscriptionStatus | 
   }
 }
 
+/*
+ * The mapping itself lives in @seri/plans, shared with the portal that reads this column.
+ *
+ * Neither branch below throws, and that is a reversal worth explaining. Failing fast was
+ * once defensible because a null plan silently misled the portal — it read the null as
+ * "free" and offered a paying customer a second subscription. The portal no longer trusts
+ * a null plan at all and resolves from Polar instead, so the throw stopped buying anything
+ * and kept its whole cost: this function runs for *every* event type, nothing upstream
+ * catches it (adapter-utils calls the handler synchronously, @polar-sh/nextjs awaits it
+ * bare), so an unconfigured deployment 500s on every webhook. That takes down
+ * `subscription_status` too, which works today and has nothing to do with plans, and Polar
+ * eventually stops retrying — leaving rows permanently stale.
+ *
+ * So both cases write null, at two volumes: missing configuration is an operator error and
+ * is logged as an error, while an id that simply is not ours in an otherwise complete
+ * environment is routine and only warns.
+ */
+export function toPlan(productId: string, env: ProductEnv = process.env): Plan | null {
+  const missing = missingProductVars(env);
+  if (missing.length > 0) {
+    console.error(
+      `Polar webhook: cannot resolve a plan, ${missing.join(", ")} not set; writing plan as null`,
+    );
+    return null;
+  }
+  const plan = planForProductId(productId, env);
+  if (!plan) {
+    console.warn(`Polar webhook: unrecognized product id "${productId}", writing plan as null`);
+  }
+  return plan;
+}
+
 export function toAccountStatusParams(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
+  plan: Plan | null,
 ): AccountStatusUpsertParams | null {
   if (!customer.externalId) return null;
   return {
@@ -38,15 +74,17 @@ export function toAccountStatusParams(
     email: customer.email ?? null,
     polarCustomerId: customer.id,
     status,
+    plan,
   };
 }
 
 function upsertFromCustomer(
   customer: SubscriptionCustomer,
   status: SubscriptionStatus,
+  productId: string,
   supabase: SupabaseClient = getSupabaseClient(),
 ): Promise<void> {
-  const params = toAccountStatusParams(customer, status);
+  const params = toAccountStatusParams(customer, status, toPlan(productId));
   if (!params) {
     console.warn(`Polar webhook: customer ${customer.id} has no externalId, skipping upsert`);
     return Promise.resolve();
@@ -54,19 +92,34 @@ function upsertFromCustomer(
   return upsertAccountStatus(supabase, params);
 }
 
-function syncSubscription(
+/*
+ * `subscription.updated` fires for every change a subscription undergoes, so scheduling a
+ * cancellation delivers it *as well as* `subscription.canceled` — two independent POSTs, no
+ * ordering guarantee. onSubscriptionCanceled below hardcodes "canceled" because data.status
+ * stays "active" through the notice period; that is worth nothing if this handler then
+ * rewrites the row from the same misleading field a moment later, which is what it did.
+ *
+ * So the pending cancellation is read from the payload rather than inferred from the event
+ * name, and both handlers reach the same answer no matter which order they arrive in.
+ *
+ * The override is scoped to "active" deliberately. past_due and canceled are already accurate
+ * and more specific, and flattening them to "canceled" would hide a failing payment.
+ */
+export function syncSubscription(
   payload:
     | WebhookSubscriptionCreatedPayload
     | WebhookSubscriptionActivePayload
     | WebhookSubscriptionUncanceledPayload
     | WebhookSubscriptionUpdatedPayload,
+  supabase?: SupabaseClient,
 ): Promise<void> {
-  const status = toSubscriptionStatus(payload.data.status);
-  if (!status) {
+  const mapped = toSubscriptionStatus(payload.data.status);
+  if (!mapped) {
     console.warn(`Polar webhook: unrecognized subscription status "${payload.data.status}", skipping upsert`);
     return Promise.resolve();
   }
-  return upsertFromCustomer(payload.data.customer, status);
+  const status = mapped === "active" && payload.data.cancelAtPeriodEnd ? "canceled" : mapped;
+  return upsertFromCustomer(payload.data.customer, status, payload.data.productId, supabase);
 }
 
 // Polar keeps `data.status` as "active" while a cancellation is only scheduled
@@ -76,7 +129,7 @@ export function onSubscriptionCanceled(
   payload: WebhookSubscriptionCanceledPayload,
   supabase?: SupabaseClient,
 ): Promise<void> {
-  return upsertFromCustomer(payload.data.customer, "canceled", supabase);
+  return upsertFromCustomer(payload.data.customer, "canceled", payload.data.productId, supabase);
 }
 
 export const POST = Webhooks({
@@ -87,5 +140,5 @@ export const POST = Webhooks({
   onSubscriptionUncanceled: syncSubscription,
   onSubscriptionUpdated: syncSubscription,
   onSubscriptionRevoked: (payload: WebhookSubscriptionRevokedPayload) =>
-    upsertFromCustomer(payload.data.customer, "revoked"),
+    upsertFromCustomer(payload.data.customer, "revoked", payload.data.productId),
 });
