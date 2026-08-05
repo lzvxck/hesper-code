@@ -15,7 +15,7 @@ const UPDATED_PARAM = "updated";
 export const ACCOUNT_UPDATED = `/?${UPDATED_PARAM}=1`;
 
 // Spelled once for the same reason: the control and the page it reaches are in different
-// files, and a literal at each end survives a rename of either.
+// files, and a literal at each end survives a rename of either, silently.
 export const USAGE = "/usage";
 
 export function isFreshLoad(params: Record<string, string | string[] | undefined>): boolean {

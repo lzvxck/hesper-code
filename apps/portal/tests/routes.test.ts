@@ -63,9 +63,11 @@ function fakePolar(
 
 const deps = (polar: Polar) => ({ polar, products: PRODUCTS, userId: SESSION_USER_ID, origin: ORIGIN });
 
-// The button and the page it reaches name the same symbol rather than agreeing on a string,
-// for the reason ACCOUNT_UPDATED is a constant: a rename that misses one end still compiles.
-test("USAGE is the path app/usage is served from", () => {
+// What the constant buys is one spelling: Shell.tsx's link imports USAGE rather than writing
+// "/usage" itself, so the value lives in one file. What it does NOT buy is agreement with the
+// route — app/usage/page.tsx is a filesystem route that never imports USAGE, so renaming that
+// directory leaves this assertion green and the button 404ing. This pins the value only.
+test("USAGE is the one spelling of the usage path", () => {
   expect(USAGE).toBe("/usage");
 });
 
