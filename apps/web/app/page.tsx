@@ -16,13 +16,13 @@ const REPO_URL = "https://github.com/lzvxck/seri-agent";
 const HEDGES: { title: string; body: ReactNode }[] = [
   {
     title: "Bounded",
-    body: "Memory has a size budget. When it is full seri consolidates, and tells you — it never quietly drops what it already knows.",
+    body: "Memory has a size budget. When it is full seri consolidates — it never quietly drops what it already knows.",
   },
   {
     title: "Staged, not applied",
     body: (
       <>
-        Every write lands in a pending queue. See it with{" "}
+        Every write lands in a pending queue — the gate is on by default. See it with{" "}
         <code className="font-mono text-on-ink">/memory diff</code>, take it with{" "}
         <code className="font-mono text-on-ink">/memory approve</code>, or throw it away.
       </>
@@ -121,9 +121,9 @@ export default function Home() {
 
           <Reveal delay={120}>
             <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">
-              After each turn, seri reviews what happened and decides what was worth keeping. What it
-              keeps is bounded, every write waits for your approval, and it takes effect the next
-              time you start — never underneath you mid-task.
+              As you work, seri reviews what happened and decides what was worth keeping. What it
+              keeps is bounded, every write waits for your approval by default, and it takes effect
+              the next time you start — never underneath you mid-task.
             </p>
           </Reveal>
 
@@ -161,9 +161,10 @@ export default function Home() {
                 How it learns.
               </h2>
               <p className="mt-11 max-w-[58ch] text-on-ink-subtle md:mt-16 md:text-[16px]/[1.4]">
-                When a turn finishes, a separate pass reads the transcript with one job: work out what
-                was worth learning. It can write to memory. It cannot run a command, edit a file, or
-                reach the network — and what it writes is staged, not applied.
+                As turns complete, a separate pass reads the transcript with one job: work out what
+                was worth learning. It can write to memory, within a fixed size budget. It cannot run
+                a command, edit a file, or reach the network — and what it writes is staged, not
+                applied.
               </p>
             </Reveal>
 
@@ -347,8 +348,8 @@ export default function Home() {
                 It gets better at your codebase.
               </h2>
               <p className="mx-auto mt-11 max-w-[52ch] text-on-ink-subtle md:mt-16 md:text-[16px]/[1.4]">
-                One command to install. It starts read-only, and everything it learns waits for your
-                approval before it counts.
+                One command to install. It starts read-only, what it keeps is bounded, and everything
+                it learns waits for your approval by default before it counts.
               </p>
               <div className="mt-29 flex flex-wrap justify-center gap-8">
                 <Button asChild variant="onInk">
