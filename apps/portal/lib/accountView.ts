@@ -1,14 +1,17 @@
 import { PLANS, type Plan } from "@seri/plans";
+import type { ScheduledChange } from "./scheduled";
 
 export type PlanCard = {
   plan: Plan;
   /** Filled, inverted styling — the plan the account holds right now. */
   current: boolean;
-  /** Replaces the switch button when set. */
-  note: string | null;
-  /** Carries a radio and, once selected, a Switch button. */
+  /** What the card's control reads before anything is selected. */
+  label: string;
+  /** Carries a radio, and the label becomes a real submit once this card is the checked one. */
   selectable: boolean;
 };
+
+const CHOOSE = "Choose plan";
 
 /*
  * The ladder every state renders. It is a function rather than markup because the bug it
@@ -17,50 +20,53 @@ export type PlanCard = {
  * no anchor for where they were standing. The cards are now always present and this is where
  * that is decided, somewhere a test can reach without rendering anything.
  *
- * `current` is the plan held *now*. During a scheduled cancellation that is still the paid
- * plan, not Free: Free is where they arrive later, which the note on the Free card says
- * outright. Marking Free as current there is exactly the misreading the old layout invited.
+ * `current` is the plan held *now*, which during any scheduled change is still the old one —
+ * the new plan is where the account arrives, and its card says so outright. Marking the
+ * destination as current is exactly the misreading the old layout invited.
  *
- * What that card must not do is *call itself* current. Reported against the live page: right
- * after a downgrade the Pro card read "Current plan" while the heading above it read "Pro
- * until 4 September, then Free", and one of the two had to be wrong. So a plan on its way out
- * carries its end date instead, and the pair reads as the timeline it is — "Ends 4 September"
- * above "Begins 4 September". The styling still marks it, because access today really is
- * Pro's; only the word that outlived the cancellation is gone.
+ * What a card may *not* do is call itself "Current plan" while something is scheduled.
+ * Reported against the live page: right after a downgrade the Pro card read "Current plan"
+ * while the heading above it read "Pro until 4 September, then Free", and one of the two had
+ * to be wrong. A plan on its way out carries its end date instead, and the pair reads as the
+ * timeline it is.
  *
- * Visible is not the same as actionable, and the two states that suppress every button do it
- * for different reasons:
- *
- *   - Scheduled cancellation. `billing.ts` refuses every real change while one is pending —
- *     changePlan answers 409 SCHEDULED_TO_CANCEL, and createCheckout answers 409
- *     SCHEDULED_TO_CANCEL_CHECKOUT rather than open a second subscription. So the cards are
- *     shown and none of them is selectable; Resume, above the ladder, is the one action that
- *     leads anywhere. Offering a Switch here would render a button whose only possible answer
- *     is an error page.
- *   - An unrecognized plan. The retired-product case: createCheckout refuses an account
- *     already holding something paid, and changePlan cannot identify what to change.
+ * Selectability follows the *kind* of scheduled change, not its presence, because Polar treats
+ * the two differently — see scheduled.ts. Under a cancellation every switch is refused, so
+ * offering one would render a button whose only possible answer is an error page. Under a
+ * pending downgrade nothing is refused, so the ladder stays live and the held plan stays
+ * choosable: picking it again is what calls the downgrade off.
  *
  * `formatDate` is injected so this stays pure and locale-independent under test.
  */
 export function planCards(
   plan: Plan | null,
-  endsAt: Date | null,
+  scheduled: ScheduledChange | null,
   formatDate: (date: Date) => string,
 ): PlanCard[] {
+  const ending = scheduled?.kind === "ends";
+
   return PLANS.map((tier) => {
     const current = tier === plan;
-    const note = current
-      ? endsAt
-        ? `Ends ${formatDate(endsAt)}`
-        : "Current plan"
-      : endsAt && tier === "free"
-        ? `Begins ${formatDate(endsAt)}`
-        : null;
-    return {
-      plan: tier,
-      current,
-      note,
-      selectable: plan !== null && endsAt === null && note === null,
-    };
+    const destination = scheduled !== null && tier === scheduled.plan && !current;
+
+    if (current) {
+      // The held plan keeps its name only while nothing is scheduled against it. Under a
+      // pending downgrade it is a live choice again, and choosing it is the way back.
+      if (!scheduled) return { plan: tier, current, label: "Current plan", selectable: false };
+      if (ending) return { plan: tier, current, label: `Ends ${formatDate(scheduled.at)}`, selectable: false };
+      return { plan: tier, current, label: "Keep this plan", selectable: true };
+    }
+
+    if (destination) {
+      return { plan: tier, current, label: `Begins ${formatDate(scheduled.at)}`, selectable: false };
+    }
+
+    /*
+     * Everything else offers the same words, and only the enabling differs: an unrecognized
+     * plan cannot be switched from (createCheckout refuses an account already holding
+     * something paid, and changePlan cannot identify what to change), and a cancellation
+     * refuses every mechanism outright.
+     */
+    return { plan: tier, current, label: CHOOSE, selectable: plan !== null && !ending };
   });
 }

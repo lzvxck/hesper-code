@@ -249,6 +249,28 @@ describe("changePlan", () => {
    * previous copy sent the customer to Manage billing, which was tried against the real
    * customer portal and offers no such control.
    */
+  /*
+   * Calling off a booked downgrade is not a plan change, it is a request for the plan already
+   * held — and the proration matters. Measured against the sandbox: the same request with
+   * `next_period` leaves the pending update in place, replaced by one pointing at the current
+   * product, so the subscription reports a scheduled change to itself and the page keeps
+   * showing a move that is no longer happening. `invoice` clears it.
+   */
+  test("invoices a request for the plan already held, which is how a booked downgrade is cleared", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_session", "prod_max")]);
+
+    const response = await changePlan(deps(polar), "max");
+
+    expect(response.status).toBe(303);
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: {
+        id: "sub_session",
+        subscriptionUpdate: { productId: "prod_max", prorationBehavior: "invoice" },
+      },
+    });
+  });
+
   test("refuses a scheduled-to-cancel subscription before Polar has to, and says to resume it", async () => {
     const { client: polar, calls } = fakePolar([
       sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true }),
