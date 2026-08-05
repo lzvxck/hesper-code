@@ -10,7 +10,7 @@ const PRODUCTS = [
   {
     name: "seri",
     href: AGENT_URL,
-    body: "An autonomous coding agent. As you work it reviews what happened, keeps what is worth keeping, and starts the next session knowing it — with every write to its memory staged for your approval first.",
+    body: "An autonomous coding agent. As you work it reviews what happened, keeps what is worth keeping, and starts the next session knowing it — with every write to its memory staged for your approval first, by default.",
   },
 ];
 
