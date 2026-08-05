@@ -8,9 +8,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   // Without this Next emits a relative og:image URL, which most scrapers reject.
   metadataBase: new URL("https://seri-agent.seriora.ai"),
-  title: "seri — a coding agent that asks before it writes",
+  title: "seri — a coding agent that learns from its own work",
   description:
-    "A cross-platform coding CLI with gate-first permissions. Every write, command and edit clears a gate you control — and new sessions start read-only.",
+    "seri reviews its own sessions and decides what was worth keeping. What it keeps is bounded, every write waits for your approval, and it takes effect next session.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
