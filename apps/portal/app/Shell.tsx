@@ -7,12 +7,13 @@ import { USAGE } from "@/lib/routes";
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
 
 /*
- * The chrome every signed-in page carries: who you are and how to leave at the top, where the
- * account is, and what to do next at the bottom. It lives here rather than in page.tsx so the
- * usage page renders inside the same account frame instead of a second copy of it.
+ * The frame both signed-in pages share: who you are and how to leave at the top, what to do
+ * next at the bottom. A module rather than a local in page.tsx so /usage renders inside the
+ * same account chrome instead of a second copy of it.
  *
- * Sign out is a server action, so it has to stay a form with a real submit — an onClick would
- * need a client component and this file has no other reason to be one.
+ * Sign out has to stay a form around endSession, which is a server action: bind it to
+ * anything else and the compiled form gets a plain URL and nothing signs out. An onClick is
+ * not the alternative — it would make this a client component, which nothing else here needs.
  */
 export function Shell({ email, children }: { email: string; children: ReactNode }) {
   return (
