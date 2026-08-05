@@ -158,6 +158,30 @@ describe("ensureProvisioned", () => {
   });
 
   /*
+   * The row is written by the webhook, asynchronously, while a plan change answers 303 to this
+   * page immediately. So right after a change the row still describes the *previous* state,
+   * and it is active and mapped, which is precisely the shape the fast path trusts — its three
+   * guards cannot see a stale paid-to-paid row, because a stale one looks exactly like a
+   * current one.
+   *
+   * Left alone, a customer who just downgraded lands on "You're on Pro" with no end date and
+   * no Resume: the cancellation they just made appears not to have happened. Coming back from
+   * a mutation therefore says so, and that resolves from Polar, which is authoritative and has
+   * already committed the change.
+   */
+  test("ignores the stored row entirely when the caller has just changed plan", async () => {
+    const { client: supabase } = fakeSupabase({ plan: "pro", subscription_status: "active" });
+    const { client: polar, calls } = fakePolar([
+      { activeSubscriptions: [sub("sub_1", "prod_pro", { cancelAtPeriodEnd: true })] },
+    ]);
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
+
+    expect(result.endsAt).toEqual(PERIOD_END);
+    expect(calls.some((call) => call.method === "customers.getStateExternal")).toBe(true);
+  });
+
+  /*
    * A churned customer whose row still says "pro" would be shown as a paying customer and
    * routed at /api/plan, which cannot revive a canceled subscription — Polar answers 403
    * AlreadyCanceledSubscription. They have to reach checkout, so a non-active row is worth

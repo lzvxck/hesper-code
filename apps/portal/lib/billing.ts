@@ -28,6 +28,15 @@ function seeOther(location: string): Response {
   return new Response(null, { status: 303, headers: { Location: location } });
 }
 
+/*
+ * Where a completed change sends the customer back to. The marker is not decoration: the page
+ * reads it and resolves the plan from Polar instead of from `account_status`, which the
+ * webhook has almost certainly not written yet at this point. Without it the page they land
+ * on shows the plan they just left — no end date after a downgrade, and the old tier after an
+ * upgrade they have already been invoiced for.
+ */
+const UPDATED = "/?updated=1";
+
 // The environment variable that is missing is logged, not returned: a 500 body is something
 // a browser will display.
 function unconfigured(plan: string): Response {
@@ -74,7 +83,7 @@ async function applyUpdate(deps: BillingDeps, id: string, update: SubscriptionUp
     if (polarStatusCode(error) === 403) return new Response(ALREADY_ENDED, { status: 409 });
     throw error;
   }
-  return seeOther("/");
+  return seeOther(UPDATED);
 }
 
 export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<Response> {
@@ -118,7 +127,7 @@ export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<
   const checkout = await deps.polar.checkouts.create({
     products: [productId],
     externalCustomerId: deps.userId,
-    successUrl: `${deps.origin}/`,
+    successUrl: `${deps.origin}${UPDATED}`,
   });
   return seeOther(checkout.url);
 }
@@ -132,6 +141,21 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
     return new Response("No paid subscription to change; upgrading from free goes through checkout.", {
       status: 409,
     });
+  }
+
+  /*
+   * Everything below assumes the subscription is still renewing, so a pending cancellation is
+   * answered first — before Polar has to 403, so the answer can say what to do about it.
+   *
+   * Down to Free is the one case that is not an error: the account is already going there, so
+   * asking again is a no-op and gets the same redirect a successful change gets. Falling
+   * through instead is what produced the worst message in this file — Polar 403s, applyUpdate
+   * maps that to ALREADY_ENDED, and a customer who still has paid access until the period end
+   * is told their subscription has ended and to start a new one.
+   */
+  if (current.subscription.cancelAtPeriodEnd) {
+    if (target === "free") return seeOther(UPDATED);
+    return new Response(SCHEDULED_TO_CANCEL, { status: 409 });
   }
 
   /*
@@ -153,11 +177,6 @@ export async function changePlan(deps: BillingDeps, plan: unknown): Promise<Resp
 
   const productId = productIdForPlan(target, deps.products);
   if (!productId) return unconfigured(target);
-
-  // Ask before Polar 403s, so the answer can say what to do about it.
-  if (current.subscription.cancelAtPeriodEnd) {
-    return new Response(SCHEDULED_TO_CANCEL, { status: 409 });
-  }
 
   /*
    * Per direction, not one setting for both. An upgrade is invoiced now, which is what the

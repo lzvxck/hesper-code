@@ -68,11 +68,26 @@ function Shell({ email, children }: { email: string; children: ReactNode }) {
   );
 }
 
-export default async function AccountPage() {
+/*
+ * `updated` is set by the 303 every completed plan change answers with, and by the checkout's
+ * successUrl. It means "the subscription changed a moment ago", which is exactly when
+ * `account_status` cannot be trusted: the webhook writes it asynchronously, so the row still
+ * describes the previous state and looks perfectly current while doing so.
+ *
+ * It is a hint about freshness and nothing else — no account, plan or amount is ever taken
+ * from the request. The worst a forged one can do is make the page ask Polar.
+ */
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ updated?: string }>;
+}) {
   const user = await getSessionUser();
+  const { updated } = await searchParams;
   const { plan, endsAt } = await ensureProvisioned(
     { supabase: getSupabaseClient(), polar: getPolarClient(), products: process.env },
     user,
+    { fresh: updated !== undefined },
   );
   const cards = planCards(plan, endsAt, formatDate);
 

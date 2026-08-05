@@ -66,8 +66,15 @@ export type AccountPlan = { plan: Plan | null; endsAt: Date | null };
 /**
  * Establishes a Polar customer and a Free subscription for a session, and reports the plan
  * that is now in force.
+ *
+ * `fresh` skips the cached row and resolves from Polar. Pass it when the caller has just
+ * changed the subscription — see the fast path below for why the row cannot be trusted then.
  */
-export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUser): Promise<AccountPlan> {
+export async function ensureProvisioned(
+  deps: ProvisioningDeps,
+  user: SessionUser,
+  { fresh = false }: { fresh?: boolean } = {},
+): Promise<AccountPlan> {
   /*
    * Fast path: in steady state a page load reaches Supabase and stops there. All three
    * conditions are load-bearing. A revoked or past_due row would otherwise report the plan
@@ -80,8 +87,14 @@ export async function ensureProvisioned(deps: ProvisioningDeps, user: SessionUse
    * A scheduled cancellation cannot hide behind this path: the webhook writes "canceled" the
    * moment one is scheduled, so such an account always falls through to Polar, which is the
    * only place the end date exists.
+   *
+   * What the three conditions cannot catch is *staleness*. The row is written by the webhook,
+   * asynchronously, while a plan change answers 303 to this page immediately — so for a
+   * moment after any change the row still describes the previous state, and a stale active row
+   * is indistinguishable from a current one. That is what `fresh` is for: the caller knows it
+   * has just mutated the subscription, and Polar has already committed the change.
    */
-  const row = await readAccountStatus(deps.supabase, user.userId);
+  const row = fresh ? null : await readAccountStatus(deps.supabase, user.userId);
   if (row?.status === "active" && row.plan) return { plan: row.plan, endsAt: null };
 
   const freeProductId = productIdForPlan("free", deps.products);

@@ -75,7 +75,7 @@ describe("createCheckout", () => {
       args: {
         products: ["prod_max"],
         externalCustomerId: SESSION_USER_ID,
-        successUrl: `${ORIGIN}/`,
+        successUrl: `${ORIGIN}/?updated=1`,
       },
     });
   });
@@ -115,9 +115,22 @@ describe("createCheckout", () => {
   test("never revokes a subscription that costs money, whatever the config calls free", async () => {
     const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
 
-    await createCheckout(deps(polar), "pro");
+    await createCheckout(deps(polar), "pro").catch(() => {});
 
     expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
+  });
+
+  /*
+   * Refusing to revoke is only half an answer. Polar permits one active subscription per
+   * customer and refuses the Subscribe step while one is live, so continuing to the checkout
+   * hands the customer a URL that cannot complete — the same doomed redirect the failed-revoke
+   * test below exists to prevent, reached by declining to revoke instead of by failing to.
+   */
+  test("stops rather than selling a checkout it just declined to make room for", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
+
+    await expect(createCheckout(deps(polar), "pro")).rejects.toThrow(/POLAR_PRODUCT_FREE/);
+    expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
   });
 
   // A failed revoke means Polar will refuse the Subscribe step, so handing back a checkout
@@ -247,6 +260,26 @@ describe("changePlan", () => {
 
     expect(response.status).toBe(409);
     expect(await response.text()).toBe("This plan is scheduled to end. Resume it first, then change plan.");
+    expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
+  });
+
+  /*
+   * Downgrading something already scheduled to end asks for a state it is already in. It used
+   * to fall through to Polar, which answers 403, which this file maps to "This subscription
+   * has already ended. Start a new one to continue." — telling a customer who still has paid
+   * access until the period end to buy a second subscription.
+   *
+   * Reachable with two tabs: downgrade in one, click the Free card in the other before it
+   * re-renders without it.
+   */
+  test("treats a repeat downgrade as a no-op instead of reporting it as ended", async () => {
+    const { client: polar, calls } = fakePolar([
+      sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true }),
+    ]);
+
+    const response = await changePlan(deps(polar), "free");
+
+    expect(response.status).toBe(303);
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
   });
 
@@ -480,7 +513,7 @@ describe("route handlers", () => {
     expect(response.status).toBe(303);
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
-      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
     });
     expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
     expect(JSON.stringify(polarCalls)).not.toContain("prod_ultra");
@@ -544,7 +577,7 @@ describe("route handlers", () => {
     expect(response.status).toBe(303);
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
-      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+      args: { products: ["prod_max"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
     });
     expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
     expect(JSON.stringify(polarCalls)).not.toContain("prod_ultra");
@@ -586,7 +619,7 @@ describe("route handlers", () => {
     expect(JSON.stringify(polarCalls)).not.toContain("attacker.example");
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
-      args: { products: ["prod_pro"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/` },
+      args: { products: ["prod_pro"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
     });
   });
 });
