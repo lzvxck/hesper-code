@@ -85,7 +85,7 @@ const MODES = [
   {
     name: "auto",
     tag: null,
-    description: "Runs unattended once you've decided the task is worth it. Your call, not the model's.",
+    description: "Runs without stopping to ask, once you've decided the task is worth it. Your call, not the model's.",
   },
 ];
 
@@ -121,8 +121,8 @@ export default function Home() {
 
           <Reveal delay={120}>
             <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">
-              After a session ends, seri reviews what happened and decides what was worth keeping. What
-              it keeps is bounded, every write waits for your approval, and it takes effect the next
+              After each turn, seri reviews what happened and decides what was worth keeping. What it
+              keeps is bounded, every write waits for your approval, and it takes effect the next
               time you start — never underneath you mid-task.
             </p>
           </Reveal>

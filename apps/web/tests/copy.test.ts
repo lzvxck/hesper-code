@@ -9,18 +9,7 @@ import { describe, expect, test } from "bun:test";
  * and asserted as words: the risk being guarded is a sentence that a reader can falsify by
  * opening the docs, which no type or render check can see.
  */
-const PAGE = readFileSync(join(import.meta.dir, "../app/page.tsx"), "utf8");
-
-/*
- * One exemption, and only one. The `auto` mode description has read "Runs unattended once
- * you've decided the task is worth it" since launch and is kept verbatim: it describes a
- * mode that ships and that you enter by hand, not the background or scheduled runs the
- * ban below is aimed at. Scanning with it removed keeps every *other* occurrence a
- * failure — and if the description is ever reworded, this stops matching and the page goes
- * red rather than quietly losing its cover.
- */
-const AUTO_MODE = "Runs unattended once you've decided the task is worth it.";
-const COPY = PAGE.replace(AUTO_MODE, "");
+const COPY = readFileSync(join(import.meta.dir, "../app/page.tsx"), "utf8");
 
 // Reporting every phrase that hit, rather than asserting one at a time: a failure names
 // the offending words instead of dumping the whole page as the received value.
