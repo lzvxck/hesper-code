@@ -115,7 +115,7 @@ describe("createCheckout", () => {
   test("never revokes a subscription that costs money, whatever the config calls free", async () => {
     const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
 
-    await createCheckout(deps(polar), "pro").catch(() => {});
+    expect((await createCheckout(deps(polar), "pro")).status).toBe(500);
 
     expect(calls.some((call) => call.method === "subscriptions.revoke")).toBe(false);
   });
@@ -129,7 +129,12 @@ describe("createCheckout", () => {
   test("stops rather than selling a checkout it just declined to make room for", async () => {
     const { client: polar, calls } = fakePolar([sub("sub_mislabelled", "prod_free", { amount: 2000 })]);
 
-    await expect(createCheckout(deps(polar), "pro")).rejects.toThrow(/POLAR_PRODUCT_FREE/);
+    const response = await createCheckout(deps(polar), "pro");
+
+    // A body a browser can display, like every other misconfiguration in this module — not a
+    // raw exception through a route handler that error.tsx does not catch.
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("That plan is unavailable right now.");
     expect(calls.some((call) => call.method === "checkouts.create")).toBe(false);
   });
 
@@ -192,6 +197,9 @@ describe("changePlan", () => {
     const response = await changePlan(deps(polar), "ultra");
 
     expect(response.status).toBe(303);
+    // Back to the page with the freshness marker: account_status still says "pro" at this
+    // instant, and without it the customer is invoiced for Ultra and shown Pro.
+    expect(response.headers.get("Location")).toBe("/?updated=1");
     expect(calls).toContainEqual({
       method: "subscriptions.update",
       args: {
@@ -212,6 +220,7 @@ describe("changePlan", () => {
     const response = await changePlan(deps(polar), "pro");
 
     expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
     expect(calls).toContainEqual({
       method: "subscriptions.update",
       args: {
@@ -273,13 +282,20 @@ describe("changePlan", () => {
    * re-renders without it.
    */
   test("treats a repeat downgrade as a no-op instead of reporting it as ended", async () => {
-    const { client: polar, calls } = fakePolar([
-      sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true }),
-    ]);
+    // The 403 Polar really answers here, so the test fails the way the customer met it rather
+    // than on a call count: without the guard this reaches applyUpdate and comes back 409
+    // "This subscription has already ended. Start a new one to continue."
+    const alreadyCanceled = Object.assign(new Error("AlreadyCanceledSubscription"), { statusCode: 403 });
+    const { client: polar, calls } = fakePolar(
+      [sub("sub_session", "prod_pro", { cancelAtPeriodEnd: true })],
+      alreadyCanceled,
+    );
 
     const response = await changePlan(deps(polar), "free");
 
     expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
+    expect(await response.text()).not.toContain("already ended");
     expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
   });
 
@@ -391,6 +407,7 @@ describe("resumePaidPlan", () => {
     const response = await resumePaidPlan(deps(polar));
 
     expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
     expect(calls).toContainEqual({
       method: "subscriptions.update",
       args: { id: "sub_paid", subscriptionUpdate: { cancelAtPeriodEnd: false } },

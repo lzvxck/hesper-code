@@ -70,22 +70,23 @@ function freeSubscription(subscriptions: ActiveSubscription[], env: ProductEnv):
  * Failures propagate. This is a required step of the purchase, not bookkeeping: swallowing it
  * would hand the customer a checkout that Polar then refuses at the last screen.
  *
- * That applies to the backstop as much as to a network failure, which is why it throws rather
- * than returning. Declining to revoke is the right call, but the subscription is still live
- * and Polar will still refuse the Subscribe step, so returning quietly only moves the dead end
- * further along — from an error here to a checkout page the customer cannot complete.
+ * The backstop is reported rather than thrown, because it is not the same kind of event as a
+ * failed call: nothing went wrong at Polar, the configuration is wrong here. The caller has to
+ * stop either way — the subscription is still live and Polar will refuse the Subscribe step,
+ * so continuing only moves the dead end from an error to a checkout page that cannot complete
+ * — but a misconfiguration gets the readable 500 this module already gives one, not a raw
+ * exception through a route handler that error.tsx does not catch.
  */
+export type RevokeOutcome = "revoked" | "nothing-to-revoke" | "refused-not-free";
+
 export async function revokeFreeSubscription(
   polar: Polar,
   subscriptions: ActiveSubscription[],
   products: ProductEnv,
-): Promise<void> {
+): Promise<RevokeOutcome> {
   const free = freeSubscription(subscriptions, products);
-  if (!free) return;
-  if (free.amount !== 0) {
-    throw new Error(
-      `POLAR_PRODUCT_FREE points at subscription ${free.id}, which costs ${free.amount} — refusing to revoke a paid subscription to make room for a checkout.`,
-    );
-  }
+  if (!free) return "nothing-to-revoke";
+  if (free.amount !== 0) return "refused-not-free";
   await polar.subscriptions.revoke({ id: free.id });
+  return "revoked";
 }

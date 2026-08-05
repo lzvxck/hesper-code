@@ -1,4 +1,4 @@
-import { PAID_PLANS, type Plan, type SubscriptionStatus } from "@seri/plans";
+import { PAID_PLANS, type Plan, type SubscriptionStatus, isPaidPlan } from "@seri/plans";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /*
@@ -75,11 +75,19 @@ export async function upsertAccountStatus(
    * configuration, so it still identifies the zero-cost tier when the product mapping has
    * fallen over. It is the same predicate revokeFreeSubscription already trusts.
    *
+   * The plan check is not redundant with it, and this is the part that is *not* measured: what
+   * Polar reports in `amount` for a discounted, trialing or zero-priced paid subscription has
+   * not been established here, and `Subscription` carries `discount` separately, so a paid
+   * subscription reading 0 is possible. Were that to happen with only the amount test, its
+   * revoke would take the conditional path, fail to match its own active row, and strand a
+   * churned customer as active forever. Anything labelled paid therefore wins outright, and
+   * the conditional path is left holding only what is both zero-cost and not a paid tier.
+   *
    * What this still cannot repair is a deployment with *no* product ids at all: every row is
    * then written with plan null, so `plan.is.null` matches and the filter admits everything.
    * That is a configuration alarm, not a race — see the deploy runbook.
    */
-  if (params.amount !== 0) {
+  if (params.amount !== 0 || isPaidPlan(params.plan)) {
     const { error } = await supabase
       .from("account_status")
       .upsert(row, { onConflict: "workos_user_id" });

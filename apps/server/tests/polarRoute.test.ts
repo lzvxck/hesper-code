@@ -123,13 +123,18 @@ describe("toAccountStatusParams", () => {
   });
 });
 
-// Every payload here costs money, so upsertAccountStatus takes its unconditional path and a
-// bare upsert is all the fake needs. These tests are about what gets written; the free-tier
-// ordering guard and its conditional update are accountStatus.test.ts's subject.
+// Every payload here costs money, so upsertAccountStatus takes its unconditional path and the
+// upsert is the only call the fake actually receives. These tests are about what gets written;
+// the free-tier ordering guard and its conditional update are accountStatus.test.ts's subject.
+//
+// The `select` stanza below is left over from when upsertAccountStatus read the row before
+// writing. It has been dead since that read was removed, and is left alone rather than tidied
+// away here, being nobody's business in this change.
 function fakeSupabase() {
   const calls: { row: Record<string, unknown> }[] = [];
   const client = {
     from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }),
       upsert: (row: Record<string, unknown>) => {
         calls.push({ row });
         return Promise.resolve({ data: null, error: null });

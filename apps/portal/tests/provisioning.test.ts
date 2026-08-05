@@ -170,7 +170,7 @@ describe("ensureProvisioned", () => {
    * already committed the change.
    */
   test("ignores the stored row entirely when the caller has just changed plan", async () => {
-    const { client: supabase } = fakeSupabase({ plan: "pro", subscription_status: "active" });
+    const { client: supabase, filters } = fakeSupabase({ plan: "pro", subscription_status: "active" });
     const { client: polar, calls } = fakePolar([
       { activeSubscriptions: [sub("sub_1", "prod_pro", { cancelAtPeriodEnd: true })] },
     ]);
@@ -179,6 +179,28 @@ describe("ensureProvisioned", () => {
 
     expect(result.endsAt).toEqual(PERIOD_END);
     expect(calls.some((call) => call.method === "customers.getStateExternal")).toBe(true);
+    // "Ignores" as in never asks, not as in reads and discards.
+    expect(filters).toEqual([]);
+  });
+
+  /*
+   * The return from a completed checkout. Polar redirects on confirmation and the new
+   * subscription is not guaranteed to be readable yet, so `fresh` — which deliberately skips
+   * the cached row — can arrive here seeing nothing at all.
+   *
+   * Provisioning Free would be the worst reading of that silence: the customer has just paid,
+   * Polar permits one active subscription per customer, and the free one would either lose the
+   * race or displace what they bought.
+   */
+  test("never provisions on a fresh load that finds nothing, since the customer may have just paid", async () => {
+    const { client: supabase, claims } = fakeSupabase({ plan: "free", subscription_status: "active" });
+    const { client: polar, calls } = fakePolar([{ activeSubscriptions: [] }]);
+
+    const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
+
+    expect(calls.some((call) => call.method === "subscriptions.create")).toBe(false);
+    expect(claims.size).toBe(0);
+    expect(result).toEqual({ plan: "free", endsAt: null });
   });
 
   /*

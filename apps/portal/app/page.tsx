@@ -80,7 +80,9 @@ function Shell({ email, children }: { email: string; children: ReactNode }) {
 export default async function AccountPage({
   searchParams,
 }: {
-  searchParams: Promise<{ updated?: string }>;
+  // `?updated=1&updated=2` arrives as an array; only its presence is ever read, but the
+  // annotation should not claim a shape Next does not guarantee.
+  searchParams: Promise<{ updated?: string | string[] }>;
 }) {
   const user = await getSessionUser();
   const { updated } = await searchParams;

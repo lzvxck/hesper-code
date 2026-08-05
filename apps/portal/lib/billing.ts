@@ -34,8 +34,12 @@ function seeOther(location: string): Response {
  * webhook has almost certainly not written yet at this point. Without it the page they land
  * on shows the plan they just left — no end date after a downgrade, and the old tier after an
  * upgrade they have already been invoiced for.
+ *
+ * It is deliberately not consumed afterwards. Clearing it would need client JavaScript, which
+ * this page does not have and which is worth more than the cost of leaving it: a refresh with
+ * the marker still attached only asks Polar again.
  */
-const UPDATED = "/?updated=1";
+export const UPDATED = "/?updated=1";
 
 // The environment variable that is missing is logged, not returned: a 500 body is something
 // a browser will display.
@@ -122,7 +126,19 @@ export async function createCheckout(deps: BillingDeps, plan: unknown): Promise<
    * window is a few seconds, the repair is already written, and both alternatives are more
    * moving parts than the problem.
    */
-  await revokeFreeSubscription(deps.polar, subscriptions, deps.products);
+  /*
+   * "refused-not-free" is POLAR_PRODUCT_FREE pointed at a paid product. Refusing to revoke is
+   * right — no configuration typo may cancel a subscription somebody is paying for — but it
+   * also means the account still holds one, so Polar would refuse the Subscribe step and the
+   * checkout URL would lead nowhere. Stopping here with a readable 500 beats selling a page
+   * that cannot work. A revoke that *fails* still throws, and still propagates.
+   */
+  if ((await revokeFreeSubscription(deps.polar, subscriptions, deps.products)) === "refused-not-free") {
+    console.error(
+      `POLAR_PRODUCT_FREE points at a subscription that costs money for customer ${deps.userId}; refusing to revoke it for a checkout`,
+    );
+    return new Response("That plan is unavailable right now.", { status: 500 });
+  }
 
   const checkout = await deps.polar.checkouts.create({
     products: [productId],

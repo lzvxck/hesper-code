@@ -128,6 +128,22 @@ export async function ensureProvisioned(
   }
 
   /*
+   * Nothing visible, on a load that follows a change this customer just made — most often the
+   * return from a completed checkout, where Polar redirects on confirmation and the new
+   * subscription is not guaranteed to be readable yet.
+   *
+   * Provisioning Free here would be the worst possible reading of that silence: the customer
+   * has just paid, Polar permits one active subscription per customer, and the free one would
+   * either lose the race or displace what they bought. So this reports what the row last knew
+   * and stops. It is a moment, and the next ordinary load resolves it properly — including the
+   * repair below, which stays reachable for every load that is not `fresh`.
+   */
+  if (fresh) {
+    const row = await readAccountStatus(deps.supabase, user.userId);
+    return { plan: row?.plan ?? null, endsAt: null };
+  }
+
+  /*
    * No active subscription. Three ways to arrive here, and this one branch repairs all of
    * them: a genuinely new customer; one whose paid subscription has lapsed after a downgrade
    * to Free, since Polar allows only one subscription at a time and nothing is left running

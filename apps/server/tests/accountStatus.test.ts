@@ -118,6 +118,22 @@ describe("upsertAccountStatus free-event protection", () => {
     expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id" });
   });
 
+  /*
+   * What Polar reports in `amount` for a discounted, trialing or zero-priced paid subscription
+   * is not established here, and Subscription carries `discount` separately — so a paid
+   * subscription reading 0 is possible. If one did, and only the amount were tested, its
+   * revoke would take the conditional path, fail to match its own active row, and strand a
+   * churned customer as active forever.
+   */
+  test("lets a paid plan through unconditionally even when it costs nothing", async () => {
+    const { client, upserts, updates } = fakeSupabase();
+
+    await upsertAccountStatus(client, { ...FREE_EVENT, plan: "pro", amount: 0 });
+
+    expect(updates).toEqual([]);
+    expect(upserts[0]?.opts).toEqual({ onConflict: "workos_user_id" });
+  });
+
   test("throws when the conditional update fails", async () => {
     const supabaseError = new Error("write failed");
     const { client } = fakeSupabase(supabaseError);
