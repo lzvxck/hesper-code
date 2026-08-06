@@ -5,11 +5,6 @@
  * Two copies of these lists drifted inside the single change that introduced them — one site
  * spelled the AGI pattern case-sensitively and the other did not — which is the failure this
  * file exists to make impossible.
- *
- * Imported by relative path rather than as `@seri/copy-policy`: bun installs this workspace
- * with the isolated linker, so a package would have to be declared as a dependency of both
- * apps and recorded in bun.lock. That is a lot of package-manager surface for a module two
- * test files share and nothing ships.
  */
 
 export const OVERCLAIMS = [

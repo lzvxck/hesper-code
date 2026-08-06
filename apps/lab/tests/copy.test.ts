@@ -3,13 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
-import {
-  FUTURITY,
-  OVERCLAIMS,
-  UNSHIPPED,
-  found,
-  visibleText,
-} from "../../../packages/copy-policy/claims";
+import { FUTURITY, OVERCLAIMS, UNSHIPPED, found, visibleText } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
 
