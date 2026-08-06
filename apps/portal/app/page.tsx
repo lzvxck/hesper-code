@@ -92,7 +92,7 @@ export default async function AccountPage({
           };
 
   return (
-    <Shell email={user.email}>
+    <Shell email={user.email} current="account">
       <h1 className="text-[38px] leading-[1.1] font-bold tracking-[-1px] md:text-display">{heading}</h1>
       <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">{blurb}</p>
 

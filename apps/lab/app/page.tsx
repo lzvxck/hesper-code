@@ -109,12 +109,15 @@ export default function Home() {
             </p>
           </Reveal>
 
-          <ul className="mt-29 grid gap-8 md:mt-34 md:grid-cols-2 md:gap-11">
+          {/* The id is how tests/copy.test.ts tells this list apart from the two other grids
+              in the rendered page: it cuts this one out and then asserts that nothing left
+              names a product. Remove it and both of that file's structural tests go red. */}
+          <ul id="products" className="mt-29 grid gap-8 md:mt-34 md:grid-cols-2 md:gap-11">
             {PRODUCTS.map((product, index) => (
               <Reveal
                 key={product.name}
                 as="li"
-                delay={index * 100}
+                delay={(index % 2) * 100}
                 className="flex h-full flex-col rounded-md border border-ink-hairline bg-canvas p-16 shadow-card md:p-22"
               >
                 <code className="font-mono text-mono font-bold">{product.name}</code>
@@ -149,7 +152,7 @@ export default function Home() {
               <Reveal
                 key={problem.title}
                 as="li"
-                delay={index * 100}
+                delay={(index % 2) * 100}
                 className="flex h-full flex-col rounded-md border border-ink-hairline p-16 md:p-22"
               >
                 <h3 className="text-[16px] leading-[1.3] font-bold tracking-[-0.3px]">

@@ -14,8 +14,14 @@ const UPDATED_PARAM = "updated";
 
 export const ACCOUNT_UPDATED = `/?${UPDATED_PARAM}=1`;
 
-// Spelled once for the same reason: the control and the page it reaches are in different
-// files, and a literal at each end survives a rename of either, silently.
+/*
+ * The two signed-in pages the account chrome links between. Unlike UPDATED_PARAM these are not
+ * a protocol: app/page.tsx and app/usage/page.tsx are filesystem routes with no string to
+ * rename, and Shell.tsx is the only consumer of either. They pin the spelling in one file and
+ * nothing more — renaming the usage directory leaves these constants, and the assertion in
+ * tests/routes.test.ts, agreeing with themselves while the button 404s.
+ */
+export const PLANS = "/";
 export const USAGE = "/usage";
 
 export function isFreshLoad(params: Record<string, string | string[] | undefined>): boolean {
@@ -23,10 +29,11 @@ export function isFreshLoad(params: Record<string, string | string[] | undefined
 }
 
 /*
- * Nothing strips the marker: a refresh keeps it, every mutation redirects back to it, the
- * customer portal returns to it, and the wordmark is an in-page anchor — so no link on the
- * page reaches a markerless `/`. That is fine while the answer is a plan, and a trap when it
- * is not.
+ * Nothing on this page strips the marker: a refresh keeps it, every mutation redirects back to
+ * it, the customer portal returns to it, and the wordmark is an in-page anchor. The one route
+ * to a markerless `/` is the detour out to /usage and back through "Back to plans" — two
+ * clicks, on a page a customer stuck here has no reason to open. So treat the marker as
+ * sticky: fine while the answer is a plan, a trap when it is not.
  *
  * A fresh load resolving to no plan is the ambiguous moment: either Polar has not published a
  * just-completed checkout yet, or the customer abandoned one after their Free subscription had

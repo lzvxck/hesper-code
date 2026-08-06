@@ -2,7 +2,7 @@ import { Button, SiteFooter, SiteNav } from "@seri/ui";
 import type { ReactNode } from "react";
 
 import { endSession } from "@/lib/actions";
-import { USAGE } from "@/lib/routes";
+import { PLANS, USAGE } from "@/lib/routes";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
 
@@ -15,7 +15,26 @@ const REPO_URL = "https://github.com/lzvxck/seri-agent";
  * anything else and the compiled form gets a plain URL and nothing signs out. An onClick is
  * not the alternative — it would make this a client component, which nothing else here needs.
  */
-export function Shell({ email, children }: { email: string; children: ReactNode }) {
+export function Shell({
+  email,
+  current,
+  children,
+}: {
+  email: string;
+  current: "account" | "usage";
+  children: ReactNode;
+}) {
+  /*
+   * The control row offers the page you are not on. Without this /usage was a dead end: its
+   * only two controls were a "View usage" button pointing at itself and Polar's billing
+   * portal, and the wordmark is an in-page anchor, so nothing on it reached the plans again.
+   *
+   * Passed rather than detected — usePathname would make this a client component, and both
+   * call sites are the pages themselves.
+   */
+  const elsewhere =
+    current === "account" ? { href: USAGE, label: "View usage" } : { href: PLANS, label: "Back to plans" };
+
   return (
     <>
       <SiteNav wordmark="seri" repoUrl={REPO_URL} links={[]} />
@@ -35,7 +54,7 @@ export function Shell({ email, children }: { email: string; children: ReactNode 
 
           <div className="mt-29 flex flex-wrap items-center gap-8 md:mt-34">
             <Button asChild variant="outline">
-              <a href={USAGE}>View usage</a>
+              <a href={elsewhere.href}>{elsewhere.label}</a>
             </Button>
             <Button asChild variant="ghost">
               {/* Invoices, receipts, payment method and cancellation all live in Polar. */}
