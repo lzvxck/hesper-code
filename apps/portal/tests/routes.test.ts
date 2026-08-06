@@ -947,6 +947,22 @@ describe("route handlers", () => {
       expect(html).toContain("$20.00/mo");
     });
 
+    /*
+     * The summary and the Cancel button have to read the same value. Once the live read supplies
+     * a cancellation the fast path could not, offering Cancel beside "Ends 4 September" would be
+     * a button for something already done — Resume is what calls it off. Mutating the guard back
+     * to the pre-live `scheduled` leaves the whole suite green without this case.
+     */
+    test("hides Cancel subscription when only the live read knows about the cancellation", async () => {
+      accountStatusRow = { plan: "max", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_max", { cancelAtPeriodEnd: true })];
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("Ends");
+      expect(html).not.toContain("Cancel subscription");
+    });
+
     test("shows the past-due banner only when account_status says past_due", async () => {
       accountStatusRow = { plan: "pro", subscription_status: "past_due" };
       sessionSubscriptions = [sub("sub_session", "prod_pro")];
