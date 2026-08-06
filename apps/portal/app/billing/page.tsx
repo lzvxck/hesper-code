@@ -125,9 +125,13 @@ export default async function BillingPage() {
     needsLive ? attempt("renewal date", () => liveSubscription(deps, user.userId, plan)) : NO_LIVE_SUBSCRIPTION,
   ]);
 
-  const effectiveRenewsAt = renewsAt ?? (live.ok ? (live.value?.subscription.currentPeriodEnd ?? null) : null);
-  const effectiveAmount = amount ?? (live.ok ? (live.value?.subscription.amount ?? null) : null);
-  const effectiveScheduled = scheduled ?? (live.ok ? (live.value?.scheduled ?? null) : null);
+  // A degraded live read and a live read that found nothing are the same thing to every field
+  // below — nothing to extend `ensureProvisioned`'s answer with — so the Attempt is unwrapped
+  // once here rather than re-asked per field.
+  const liveValue = live.ok ? live.value : null;
+  const effectiveRenewsAt = renewsAt ?? liveValue?.subscription.currentPeriodEnd ?? null;
+  const effectiveAmount = amount ?? liveValue?.subscription.amount ?? null;
+  const effectiveScheduled = scheduled ?? liveValue?.scheduled ?? null;
 
   const summary = subscriptionSummary(plan, effectiveRenewsAt, effectiveAmount, effectiveScheduled, formatDate);
 
