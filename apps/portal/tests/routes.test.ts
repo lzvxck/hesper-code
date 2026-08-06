@@ -595,6 +595,7 @@ describe("route handlers", () => {
   let cancelRoute: typeof import("../app/api/cancel/route");
   let invoiceRoute: typeof import("../app/api/invoice/route");
   let billingPage: typeof import("../app/billing/page");
+  let realPaymentMethod: typeof import("../lib/paymentMethod");
   const originalProducts = { ...PRODUCTS };
 
   // A request that names somebody else's account in every place one could be smuggled.
@@ -635,11 +636,16 @@ describe("route handlers", () => {
     process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI = `${ORIGIN}/callback`;
 
     /*
-     * NOTE: mock.module registers process-wide and afterAll does not undo it. The bare
-     * `bun test` CI runs puts every file in one process, so a future test file importing
-     * ../lib/session, ../lib/polar, ../lib/paymentMethod, ../lib/supabase or @/lib/actions will
-     * get these stubs depending on file order. Only getPolarClient is replaced on ../lib/polar —
-     * everything else is the real export.
+     * NOTE: mock.module registers process-wide and afterAll does not undo it *on its own*. The
+     * bare `bun test` CI runs puts every file in one process, so a future test file importing
+     * ../lib/session, ../lib/polar, ../lib/supabase or @/lib/actions will get these stubs
+     * depending on file order. Only getPolarClient is replaced on ../lib/polar — everything
+     * else is the real export.
+     *
+     * ../lib/paymentMethod is no longer in that list: paymentMethod.test.ts imports it for
+     * real, and the leak made its three fetch-injecting tests fail on every CI runner while
+     * passing here, because bun walks the files in a different order per platform. That one is
+     * put back explicitly in afterAll, which runs before the next file is loaded.
      */
     mock.module("server-only", () => ({}));
     mock.module("@/lib/actions", () => ({ endSession: async () => {} }));
@@ -653,6 +659,7 @@ describe("route handlers", () => {
     // getPaymentMethod's own parsing is covered by paymentMethod.test.ts's injected fetch;
     // stubbed here so /billing's render never reaches the real `fetch` this default-less call
     // would otherwise make against sandbox-api.polar.sh.
+    realPaymentMethod = { ...require("../lib/paymentMethod") };
     mock.module("../lib/paymentMethod", () => ({ getPaymentMethod: async () => null }));
     // Only account_status is read on /billing's paths under test — the same row backs both
     // ensureProvisioned's fast path and the page's own past-due check.
@@ -678,6 +685,7 @@ describe("route handlers", () => {
     // Unset originally, so they have to be deleted — assigning undefined stores the string.
     for (const name of Object.keys(originalProducts)) delete process.env[name];
     delete process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI;
+    mock.module("../lib/paymentMethod", () => realPaymentMethod);
   });
 
   beforeEach(() => {
