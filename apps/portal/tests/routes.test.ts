@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Polar } from "@polar-sh/sdk";
 import { changePlan, createCheckout, resumePaidPlan } from "../lib/billing";
@@ -63,12 +65,12 @@ function fakePolar(
 
 const deps = (polar: Polar) => ({ polar, products: PRODUCTS, userId: SESSION_USER_ID, origin: ORIGIN });
 
-// What the constant buys is one spelling: Shell.tsx's link imports USAGE rather than writing
-// "/usage" itself, so the value lives in one file. What it does NOT buy is agreement with the
-// route — app/usage/page.tsx is a filesystem route that never imports USAGE, so renaming that
-// directory leaves this assertion green and the button 404ing. This pins the value only.
-test("USAGE is the one spelling of the usage path", () => {
-  expect(USAGE).toBe("/usage");
+// app/usage/page.tsx is a filesystem route that never imports USAGE, so the two can only be
+// held together from outside: renaming the directory has to fail here rather than in a 404 on
+// the button Shell.tsx builds from the constant. Asserting USAGE === "/usage" instead — which
+// this used to do — restates the export and cannot fail.
+test("USAGE names a page that is actually on disk", () => {
+  expect(existsSync(`${import.meta.dir}/../app${USAGE}/page.tsx`)).toBe(true);
 });
 
 describe("createCheckout", () => {
