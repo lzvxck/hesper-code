@@ -1,5 +1,5 @@
 -- Append-only usage ledger. No writer exists yet — the gateway that will insert into this
--- table is Stage 7 of build-plan.md, unstarted. A row count of zero here means "waiting",
+-- table is Stage 7 of docs/BUILD-PLAN.md, unstarted. A row count of zero here means "waiting",
 -- not "broken".
 --
 -- `idempotency_key` is unique because the writer will be `insert ... on conflict do
