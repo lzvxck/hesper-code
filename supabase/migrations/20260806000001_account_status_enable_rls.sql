@@ -1,0 +1,11 @@
+-- Measured 2026-08-06: production has RLS enabled on this table, but no migration turns it
+-- on — 20260802212049 creates the table without it and 20260804165555 only adds `plan` and
+-- revokes grants. It was enabled through the dashboard, so replaying the history on an empty
+-- database produced a table with RLS off and this file closes that gap. A no-op against
+-- production by construction.
+--
+-- Zero policies is the intended end state, not an oversight: identity is WorkOS, `auth.users`
+-- is empty and `auth.uid()` does not exist, so there is no expression to write a policy on.
+-- Deny-all plus service-role-only access is the whole model. See provisioning_claims, which
+-- has had exactly this posture since 20260804195244.
+alter table public.account_status enable row level security;
