@@ -13,6 +13,19 @@ import { useEffect, useRef } from "react";
  *
  * `sessionToken` is a live customer credential, minted fresh per render by the server
  * component that renders this — never logged, never cached beyond this one page load.
+ *
+ * This embed cannot be exercised against the Polar sandbox at `@polar-sh/checkout@0.4.0`, and no
+ * published version allows it — all 24 were checked, and `main` is still 0.4.0. The allowed host
+ * list is a *build-time constant*: Polar's own `tsup.config.ts` inlines
+ * `__POLAR_CHECKOUT_EMBED_SCRIPT_ALLOWED_ORIGINS__` at their publish time, so the shipped bundle
+ * carries the literal `"https://polar.sh,https://sandbox.polar.sh"` with no `process.env` read
+ * surviving into it, and `payment-method.ts` resolves
+ * `origins.includes(window.location.origin) ? window.location.origin : origins[0]` — always
+ * production from any other origin. From localhost the iframe therefore loads polar.sh, is handed
+ * a sandbox `polar_mst_…` token, posts `{event:"error", code:"unauthorized"}` and then `loaded`,
+ * and sits at height 0: a visibly empty box that looks like our bug and is not one. It works in
+ * production, where the host, the token and the portal agree. Do not re-derive this from the
+ * empty box — see docs-tmp/polar-e2e.md for the pre-launch item that verifies it there.
  */
 export function UpdateCard({ sessionToken }: { sessionToken: string }) {
   const element = useRef<HTMLDivElement>(null);
