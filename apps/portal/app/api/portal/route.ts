@@ -6,9 +6,12 @@ import { ACCOUNT_UPDATED } from "@/lib/routes";
 import { getSessionUser } from "@/lib/session";
 
 /*
- * Invoices, receipts, payment method and cancellation all live in Polar's own portal and
- * none of it is rebuilt here — self-service cancellation is a legal requirement in some
- * jurisdictions, which is not a thing to reimplement.
+ * The past-due recovery path, and now the only place the past-due banner links to. /billing
+ * rebuilds invoices, payment method and subscription state for ordinary viewing, and it also
+ * has its own cancel control (POST /api/cancel) — but Polar's own dunning notice says a
+ * customer who has fallen behind on payment "will still need the hosted one to recover from
+ * failed payments", and retrying a card or replacing it mid-recovery is Polar's flow, not
+ * ours, so the past-due banner sends them here instead of to /billing.
  *
  * The customer comes from the session and the return URL from configuration; the request is
  * only forwarded, never read.

@@ -14,9 +14,10 @@ const UPDATED_PARAM = "updated";
 
 export const ACCOUNT_UPDATED = `/?${UPDATED_PARAM}=1`;
 
-// The two signed-in pages the account chrome links between; tests/routes.test.ts checks USAGE
-// still resolves to a page on disk.
+// The three signed-in pages the account chrome links between; tests/routes.test.ts checks
+// USAGE and BILLING still resolve to a page on disk.
 export const PLANS = "/";
+export const BILLING = "/billing";
 export const USAGE = "/usage";
 
 export function isFreshLoad(params: Record<string, string | string[] | undefined>): boolean {

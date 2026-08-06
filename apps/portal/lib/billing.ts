@@ -1,6 +1,6 @@
 import type { Polar } from "@polar-sh/sdk";
 import type { SubscriptionUpdate } from "@polar-sh/sdk/models/components/subscriptionupdate";
-import { type ProductEnv, isPaidPlan, isUpgrade, productIdForPlan, toPlan } from "@seri/plans";
+import { type ProductEnv, isPaidPlan, isUpgrade, planForProductId, productIdForPlan, toPlan } from "@seri/plans";
 import { getCustomerState, polarStatusCode } from "./polar";
 import { ACCOUNT_UPDATED } from "./routes";
 import {
@@ -57,15 +57,19 @@ const SCHEDULED_TO_CANCEL_CHECKOUT =
   "This plan is scheduled to end. Resume it rather than starting a second subscription.";
 
 // The 403 backstop for the window between our read and the write, where the customer could
-// have ended the subscription in Polar meanwhile. Deliberately does not name a remedy that
-// Manage billing cannot perform.
+// have ended the subscription in Polar meanwhile. Deliberately does not name a remedy: once
+// a subscription is truly gone, nothing reachable from here — resume, cancel, or the hosted
+// portal — can act on it again.
 const ALREADY_ENDED = "This subscription has already ended. Start a new one to continue.";
 
 function scheduledToCancel(subscriptions: ActiveSubscription[]): boolean {
   return subscriptions.some((s) => s.cancelAtPeriodEnd);
 }
 
-const ALREADY_PAID = "This account already has a paid subscription; change it under Manage billing.";
+// createCheckout is only ever reached from the plans page's own checkout form, so "here" is
+// where the customer already is — unlike the Manage billing button this used to name, which
+// is gone from every page but the past-due banner.
+const ALREADY_PAID = "This account already has a paid subscription; change it from the plans above.";
 
 async function sessionPaidSubscription(deps: BillingDeps) {
   // Found from the session's external id, never from a subscription id in the request, and
@@ -229,4 +233,31 @@ export async function resumePaidPlan(deps: BillingDeps): Promise<Response> {
   const current = await sessionPaidSubscription(deps);
   if (!current) return new Response("No paid subscription to resume.", { status: 409 });
   return applyUpdate(deps, current.subscription.id, { cancelAtPeriodEnd: false });
+}
+
+/*
+ * The remedy for "Plan not recognized" (`plan === null` in provisioning.ts): an active
+ * subscription on a product this deployment cannot map to one of the four configured plans.
+ * changePlan and resumePaidPlan both go through sessionPaidSubscription, which finds the
+ * subscription by a *recognized* paid plan via planForProductId — exactly the mapping this
+ * account does not have, so that lookup would find nothing here. Cancellation does not need
+ * to know which plan it is, only that it is not the free one: Free has no card and nothing
+ * to give up, and Polar allows one active subscription per customer, so if anything else is
+ * active, Free is not running underneath it.
+ *
+ * No pre-check for an already-scheduled cancellation, matching resumePaidPlan's shape: the
+ * backstop for that race is applyUpdate's existing 403 -> 409 mapping, not a second path.
+ */
+async function sessionSubscriptionToCancel(deps: BillingDeps): Promise<ActiveSubscription | null> {
+  const state = await getCustomerState(deps.polar, deps.userId);
+  const subscriptions = state?.activeSubscriptions ?? [];
+  return subscriptions.find((s) => planForProductId(s.productId, deps.products) !== "free") ?? null;
+}
+
+// Ends the subscription at the period end the customer already paid for — never a revoke,
+// for the same reason changePlan's target === "free" branch never revokes.
+export async function cancelPaidPlan(deps: BillingDeps): Promise<Response> {
+  const subscription = await sessionSubscriptionToCancel(deps);
+  if (!subscription) return new Response("No paid subscription to cancel.", { status: 409 });
+  return applyUpdate(deps, subscription.id, { cancelAtPeriodEnd: true });
 }
