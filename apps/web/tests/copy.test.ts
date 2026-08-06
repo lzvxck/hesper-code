@@ -6,10 +6,26 @@ import { describe, expect, test } from "bun:test";
 import { assertClean, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
+import { PLATFORMS } from "../components/InstallTabs";
 
 // Why the page is rendered rather than read as source, and what rendering does not cover, are
 // both on assertClean.
-const COPY = textNodes(renderToStaticMarkup(createElement(Home)));
+const RENDERED = textNodes(renderToStaticMarkup(createElement(Home)));
+
+/*
+ * The install tabs are the one region of this page rendering cannot reach. InstallTabs is a
+ * Radix Tabs with defaultValue="macos", and Radix does not render the children of a closed
+ * TabsContent — measured on the real render: three role="tabpanel" elements, and the markup
+ * does not contain the string "powershell" at all. So the Windows command and the Linux and
+ * Windows notes shipped as user-visible copy no pattern was ever tested against.
+ *
+ * Reading the array is the fix rather than rendering with forceMount, which would mount all
+ * three panels in every visitor's DOM to suit a test. The array is already a module-level
+ * const and the strings in it are the copy; nothing about the shipped page changes.
+ */
+const TABS = PLATFORMS.map((platform) => `${platform.command} ${platform.note}`).join(" ");
+
+const COPY = `${RENDERED} ${TABS}`;
 
 /*
  * The <title> and <meta description> make the same claims and travel furthest from the site.
