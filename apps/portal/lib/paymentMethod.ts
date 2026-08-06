@@ -27,9 +27,12 @@ type PolarPaymentMethodsResponse = {
  * becomes one SDK call the day the adapter accepts a newer SDK — nothing above this function's
  * return type has to change when it does.
  */
-export async function getPaymentMethod(externalId: string): Promise<PaymentMethod | null> {
+export async function getPaymentMethod(
+  externalId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PaymentMethod | null> {
   const base = POLAR_BASE_URL[polarServer()];
-  const response = await fetch(`${base}/v1/customers/external/${externalId}/payment-methods`, {
+  const response = await fetchImpl(`${base}/v1/customers/external/${externalId}/payment-methods`, {
     headers: { Authorization: `Bearer ${process.env.POLAR_ACCESS_TOKEN}` },
   });
   if (!response.ok) throw new Error(`Polar payment-methods request failed with status ${response.status}`);

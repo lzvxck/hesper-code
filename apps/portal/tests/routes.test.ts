@@ -637,9 +637,9 @@ describe("route handlers", () => {
     /*
      * NOTE: mock.module registers process-wide and afterAll does not undo it. The bare
      * `bun test` CI runs puts every file in one process, so a future test file importing
-     * ../lib/session, ../lib/polar, ../lib/supabase or @/lib/actions will get these stubs
-     * depending on file order. Only getPolarClient is replaced on ../lib/polar — everything
-     * else is the real export.
+     * ../lib/session, ../lib/polar, ../lib/paymentMethod, ../lib/supabase or @/lib/actions will
+     * get these stubs depending on file order. Only getPolarClient is replaced on ../lib/polar —
+     * everything else is the real export.
      */
     mock.module("server-only", () => ({}));
     mock.module("@/lib/actions", () => ({ endSession: async () => {} }));
@@ -650,6 +650,10 @@ describe("route handlers", () => {
       ...require("../lib/polar"),
       getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
     }));
+    // getPaymentMethod's own parsing is covered by paymentMethod.test.ts's injected fetch;
+    // stubbed here so /billing's render never reaches the real `fetch` this default-less call
+    // would otherwise make against sandbox-api.polar.sh.
+    mock.module("../lib/paymentMethod", () => ({ getPaymentMethod: async () => null }));
     // Only account_status is read on /billing's paths under test — the same row backs both
     // ensureProvisioned's fast path and the page's own past-due check.
     mock.module("../lib/supabase", () => ({
