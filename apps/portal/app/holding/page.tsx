@@ -8,10 +8,10 @@ const REPO_URL = "https://github.com/lzvxck/seri-agent";
  * reach. It reads no environment variable: the flag is decided in middleware and nowhere else,
  * which is what keeps the three real pages and their auth boundary untouched.
  *
- * The accepted consequence is that /holding is reachable directly even with the flag off. It
- * carries no inbound link, and closing it would cost middleware logic running on every request
- * forever to hide a page whose whole existence is temporary — the end state is this PR
- * reverted, not the flag left off.
+ * Unlike lab's and web's copies of this page, /holding is NOT reachable directly here in either
+ * flag state — measured on a running build: 307 to WorkOS with the flag set and with it unset,
+ * because this app's matcher is a catch-all and proxy.ts exempts nothing from auth. Only the
+ * rewritten `/`, /billing and /usage render it.
  */
 export default function Holding() {
   return (
