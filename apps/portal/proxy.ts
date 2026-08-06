@@ -24,17 +24,23 @@ const authkit = authkitProxy({ middlewareAuth: { enabled: true, unauthenticatedP
  * match — `authkitMiddleware` is still exported but deprecated.
  *
  * `middlewareAuth` makes every matched route secure by default rather than relying on each
- * page remembering to call withAuth, and `unauthenticatedPaths` is deliberately empty: the
- * app's only signed-out surface is the holding page below, which is served by rewriting rather
- * than by exempting a path from auth, so nothing is unauthenticated once the flag is unset.
+ * page remembering to call withAuth, and `unauthenticatedPaths` stays empty: no path is
+ * exempted from auth here, including /holding. The three held routes reach the holding page by
+ * rewrite, and a rewrite is internal — the response is the holding page's markup served under
+ * the URL the visitor asked for, not a redirect to a URL they could then request directly.
  * /callback is excluded by the matcher instead, since it is what establishes the session in
  * the first place, and the static paths are excluded because a catch-all matcher intercepts
  * them and breaks Tailwind's stylesheet.
  *
  * While SERI_COMING_SOON is set the holding branch runs FIRST, ahead of authkit, which is the
  * point: an unauthenticated visitor to `/`, /billing or /usage gets the holding page with a
- * 200 rather than the 307 to WorkOS they get today. /holding itself returns next() so the
- * rewritten request is not caught again by its own rule.
+ * 200 rather than the 307 to WorkOS they get today.
+ *
+ * There is no `pathname === HOLDING` escape hatch, and it is not needed: NextResponse.rewrite
+ * is internal, so middleware does not re-run for the rewritten path and cannot loop. Measured
+ * on a running build with the flag set — `/` answers 200 with the holding markup while a
+ * direct GET /holding answers 307 to WorkOS. Leaving /holding behind auth is the stricter of
+ * the two behaviours and costs the holding nothing.
  *
  * `authkitProxy()` returns a NextMiddleware, so `authkit(request, event)` is exactly the call
  * this module's default export used to be — with the flag unset this file is behaviourally
@@ -42,9 +48,9 @@ const authkit = authkitProxy({ middlewareAuth: { enabled: true, unauthenticatedP
  */
 export default function proxy(request: NextRequest, event: NextFetchEvent) {
   if (isHoldingEnabled()) {
-    const { pathname } = request.nextUrl;
-    if (pathname === HOLDING) return NextResponse.next();
-    if (HELD.has(pathname)) return NextResponse.rewrite(new URL(HOLDING, request.url));
+    if (HELD.has(request.nextUrl.pathname)) {
+      return NextResponse.rewrite(new URL(HOLDING, request.url));
+    }
   }
   return authkit(request, event);
 }
