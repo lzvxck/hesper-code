@@ -24,9 +24,27 @@ const authkitCalls: string[] = [];
  * the branch this file owns — which requests the holding takes and which it hands on — and
  * keeps it deterministic without env.
  *
- * The real module is spread back in afterAll because mock.module registers process-wide and
- * does not unwind on its own: CI runs a bare `bun test` from the repo root, so every test file
- * shares one registry and file order differs per platform.
+ * The real authkit module is spread back in afterAll because mock.module registers process-wide
+ * and does not unwind on its own: CI runs a bare `bun test` from the repo root, so every test
+ * file shares one registry and file order differs per platform. That is the leak 6600f25b had
+ * to fix for ../lib/paymentMethod, and it is why capturing the real module first is worth the
+ * extra import.
+ *
+ * `server-only` is NOT restored, deliberately, and the reason is that it cannot be — measured
+ * on bun 1.3.14, not assumed:
+ *
+ *   - Re-registering it with a throwing factory (the only way to reproduce a module whose body
+ *     is a bare `throw`) fails this file instead of the next one: mock.module invokes the
+ *     factory EAGERLY for an already-loaded module, so the throw lands inside afterAll.
+ *   - `mock.restore()` does not un-register a module mock at all; after calling it, importing
+ *     "server-only" still resolves to the stub.
+ *
+ * Leaving it stubbed is also harmless here in a way the authkit stub would not be. Its throw is
+ * a Next BUNDLER guard — it exists to fail a build that pulls a server module into a client
+ * bundle — and under `bun test` there is no client bundle for it to protect, so no assertion in
+ * this repo can depend on it. tests/routes.test.ts has stubbed it unconditionally and
+ * permanently for the same reason since long before this branch. Only this file and that one
+ * touch it, and no portal source imports it directly; it arrives through authkit-nextjs.
  */
 mock.module("server-only", () => ({}));
 
