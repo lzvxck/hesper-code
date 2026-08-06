@@ -49,13 +49,19 @@ const ENTITIES: Record<string, string> = {
 };
 
 /*
- * Rendered markup down to what a reader actually sees. Tags go first, so class names and hrefs
- * are never matched as copy; then React's five escapes are undone, without which "world's
- * first" reaches the patterns as "world&#x27;s first" and no apostrophe rule could ever fire.
- * Tags collapse to a space rather than to nothing, so two adjacent elements cannot fuse into a
- * word neither of them says.
+ * Rendered markup down to its text nodes. Tags go first, so class names and hrefs are never
+ * matched as copy; then React's five escapes are undone, without which "world's first" reaches
+ * the patterns as "world&#x27;s first" and no apostrophe rule could ever fire. Tags collapse to
+ * a space rather than to nothing, so two adjacent elements cannot fuse into a word neither of
+ * them says.
+ *
+ * Text nodes are all it reads, and the name says so rather than promising visible copy: an
+ * attribute is invisible to it (InstallTabs.tsx ships an aria-label no pattern here will ever
+ * see) and a raw-text element is not (a <style> body saying `.roadmap { }` would trip FUTURITY
+ * with nothing on the page saying it). Neither case exists on these pages; a page that grows
+ * one needs this function changed, not worked around at the call site.
  */
-export function visibleText(markup: string): string {
+export function textNodes(markup: string): string {
   return markup
     .replace(/<[^>]*>/g, " ")
     .replace(/&(?:amp|lt|gt|quot|#x27);/g, (entity) => ENTITIES[entity])

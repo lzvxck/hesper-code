@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
-import { FUTURITY, OVERCLAIMS, UNSHIPPED, found, visibleText } from "@seri/copy-policy";
+import { FUTURITY, OVERCLAIMS, UNSHIPPED, found, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
 
@@ -18,7 +18,7 @@ import Home from "../app/page";
  * which is what we want — Reveal's animation is not copy.
  */
 const MARKUP = renderToStaticMarkup(createElement(Home));
-const COPY = visibleText(MARKUP);
+const COPY = textNodes(MARKUP);
 
 /*
  * The <title> and <meta description> make the same kind of claim and travel furthest from the
@@ -62,7 +62,7 @@ describe("seriora.ai copy", () => {
     const products = main![0].match(/<ul id="products"[\s\S]*?<\/ul>/);
     expect(products).not.toBeNull();
 
-    expect(visibleText(main![0].replace(products![0], ""))).not.toMatch(/\bseri\b/i);
+    expect(textNodes(main![0].replace(products![0], ""))).not.toMatch(/\bseri\b/i);
   });
 
   test("puts the products in a grid that takes a second entry unchanged", () => {

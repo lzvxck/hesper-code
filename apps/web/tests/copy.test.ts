@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
-import { FUTURITY, OVERCLAIMS, UNSHIPPED, found, visibleText } from "@seri/copy-policy";
+import { FUTURITY, OVERCLAIMS, UNSHIPPED, found, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
 
@@ -17,7 +17,7 @@ import Home from "../app/page";
  * what actually ships. renderToStaticMarkup produces the initial state and runs no effects,
  * which is what we want — Reveal's animation is not copy.
  */
-const COPY = visibleText(renderToStaticMarkup(createElement(Home)));
+const COPY = textNodes(renderToStaticMarkup(createElement(Home)));
 
 /*
  * The <title> and <meta description> make the same claims and travel furthest from the site.
