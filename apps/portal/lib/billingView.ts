@@ -7,10 +7,11 @@ const TIER_NAME: Record<Plan, string> = { free: "Free", pro: "Pro", max: "Max", 
 export type SubscriptionSummary = { title: string; price: string; state: string; allowanceLine: string };
 
 /*
- * Covers exactly the four states `app/page.tsx:70-92` already distinguishes, and no others: an
- * unrecognized product, a pending cancellation, a pending downgrade, and a plain renewing
- * subscription. `renewsAt` only matters in the last of those — once anything is scheduled, its
- * own date (carried on `scheduled`) is what the page shows instead.
+ * Covers the four states `app/page.tsx:70-92` distinguishes — an unrecognized product, a pending
+ * cancellation, a pending downgrade, and a plain renewing subscription — plus one that page has
+ * no equivalent for: `"unknown"`, meaning the pending-update read failed while the rest of the
+ * data survived. `renewsAt` only matters where nothing is scheduled — once a change is known,
+ * its own date (carried on `scheduled`) is what the page shows instead.
  *
  * `amount` is Polar's own charged amount in cents, preferred over recomputing from
  * `PLAN_MONTHLY_USD` because it is what the customer is actually billed. It is null wherever
@@ -21,7 +22,7 @@ export function subscriptionSummary(
   plan: Plan | null,
   renewsAt: Date | null,
   amount: number | null,
-  scheduled: ScheduledChange | null,
+  scheduled: ScheduledChange | null | "unknown",
   formatDate: (date: Date) => string,
 ): SubscriptionSummary {
   if (plan === null) {
@@ -36,6 +37,19 @@ export function subscriptionSummary(
   const title = TIER_NAME[plan];
   const price = amount !== null ? `$${(amount / 100).toFixed(2)}/mo` : "";
   const allowanceLine = allowanceSentence(plan);
+
+  /*
+   * Not a third kind of change: the pending-update read failed while the read that produced
+   * `renewsAt` and `amount` succeeded. Falling through to the plain-renewal line below would
+   * assert the one fact that could not be checked — a booked downgrade would read as "Renews 4
+   * September" on the plan being left, which is the defect /billing exists to have fixed. So the
+   * date is reported as what it actually is, the end of the period already paid for, and the
+   * gap is named in the same voice as the page's other degraded sections.
+   */
+  if (scheduled === "unknown") {
+    const period = renewsAt ? `Next billing date ${formatDate(renewsAt)}. ` : "";
+    return { title, price, state: `${period}Scheduled changes unavailable right now.`, allowanceLine };
+  }
 
   if (scheduled?.kind === "ends") {
     return { title, price, state: `Ends ${formatDate(scheduled.at)}`, allowanceLine };

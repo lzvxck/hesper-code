@@ -43,6 +43,11 @@ function fakePolar(
   updateError?: unknown,
   calls: { method: string; args: unknown }[] = [],
   orders: { id: string }[] = [],
+  // Only `subscriptions.get` carries pending_update — customer state does not — so a scheduled
+  // plan change can only be set up here. Null unless a test says otherwise; an Error rejects
+  // instead, the same way `updateError` does for subscriptions.update, because getSubscription
+  // has no 404 tolerance and this call can fail on its own.
+  pendingUpdate: { productId: string; appliesAt: Date } | Error | null = null,
 ) {
   const client = {
     checkouts: {
@@ -60,7 +65,9 @@ function fakePolar(
     subscriptions: {
       get: (args: unknown) => {
         calls.push({ method: "subscriptions.get", args });
-        return Promise.resolve({ id: (args as { id: string }).id, pendingUpdate: null });
+        return pendingUpdate instanceof Error
+          ? Promise.reject(pendingUpdate)
+          : Promise.resolve({ id: (args as { id: string }).id, pendingUpdate });
       },
       update: (args: unknown) => {
         calls.push({ method: "subscriptions.update", args });
@@ -583,6 +590,8 @@ describe("route handlers", () => {
   let sessionSubscriptions: ActiveSubscription[] = [];
   // The session's own orders, for /api/invoice and /billing.
   let sessionOrders: ReturnType<typeof order>[] = [];
+  // A plan change Polar has already accepted for the session's subscription, if any.
+  let sessionPendingUpdate: { productId: string; appliesAt: Date } | Error | null = null;
   // account_status for the session; /billing's ensureProvisioned and its own past-due read
   // both go through this same row.
   let accountStatusRow: { plan: string; subscription_status: string } | null = {
@@ -654,7 +663,8 @@ describe("route handlers", () => {
     }));
     mock.module("../lib/polar", () => ({
       ...require("../lib/polar"),
-      getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
+      getPolarClient: () =>
+        fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders, sessionPendingUpdate).client,
     }));
     // getPaymentMethod's own parsing is covered by paymentMethod.test.ts's injected fetch;
     // stubbed here so /billing's render never reaches the real `fetch` this default-less call
@@ -691,6 +701,7 @@ describe("route handlers", () => {
   beforeEach(() => {
     polarCalls.length = 0;
     sessionOrders = [];
+    sessionPendingUpdate = null;
     accountStatusRow = { plan: "pro", subscription_status: "active" };
   });
 
@@ -901,6 +912,70 @@ describe("route handlers", () => {
       expect(html).toContain("Renews");
     });
 
+    /*
+     * The same fast path, one step further. A pending product update never demotes
+     * subscription_status — only cancelAtPeriodEnd does — so the row stays active and mapped
+     * and the cached path is always taken, which used to mean a customer dropping to Pro was
+     * told they renew on Max. The date itself is left out of the assertion for the same
+     * timezone reason the sibling above leaves it out.
+     */
+    test("renders a scheduled plan change on the ordinary cached load", async () => {
+      accountStatusRow = { plan: "max", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_max")];
+      sessionPendingUpdate = { productId: "prod_pro", appliesAt: PERIOD_END };
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("then Pro");
+      expect(html).not.toContain("Renews");
+    });
+
+    /*
+     * The pending-update read is a second, independent Polar call, and getSubscription has none
+     * of getCustomerState's 404 tolerance — a plan change made in another tab between the two
+     * can 404 it, and this PR makes that likelier by adding a fifth call to every load.
+     *
+     * Losing it must cost the scheduled line and only the scheduled line. The first version of
+     * this test asserted "Renews" here, which pinned the defect: degrading to `scheduled: null`
+     * renders a plain renewal, so a customer with a booked downgrade was told they renew on the
+     * plan they are leaving — the exact affirmative false statement this PR removes elsewhere.
+     */
+    test("says the scheduled change could not be checked, rather than claiming a renewal", async () => {
+      accountStatusRow = { plan: "max", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_max")];
+      sessionPendingUpdate = Object.assign(new Error("polar responded 404"), { statusCode: 404 });
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      // No claim about what happens at the period end, in the page's own degradation voice.
+      expect(html).not.toContain("Renews");
+      expect(html).toContain("Scheduled changes unavailable right now.");
+      // The price and the period end came from getCustomerState, which succeeded. Blanking them
+      // would be the regression this test's previous version was written to catch.
+      expect(html).toContain("$20.00/mo");
+      expect(html).toMatch(/Next billing date \d+ \w+/);
+      // A cancellation cannot be lost this way — scheduledChange answers "ends" from
+      // cancelAtPeriodEnd before it makes any call — so "unknown" must not hide the Cancel
+      // button the way a real "ends" does.
+      expect(html).toContain("Cancel subscription");
+    });
+
+    /*
+     * The summary and the Cancel button have to read the same value. Once the live read supplies
+     * a cancellation the fast path could not, offering Cancel beside "Ends 4 September" would be
+     * a button for something already done — Resume is what calls it off. Mutating the guard back
+     * to the pre-live `scheduled` leaves the whole suite green without this case.
+     */
+    test("hides Cancel subscription when only the live read knows about the cancellation", async () => {
+      accountStatusRow = { plan: "max", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_max", { cancelAtPeriodEnd: true })];
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("Ends");
+      expect(html).not.toContain("Cancel subscription");
+    });
+
     test("shows the past-due banner only when account_status says past_due", async () => {
       accountStatusRow = { plan: "pro", subscription_status: "past_due" };
       sessionSubscriptions = [sub("sub_session", "prod_pro")];
@@ -919,16 +994,24 @@ describe("route handlers", () => {
       throwingPolar.orders.list = () => Promise.reject(Object.assign(new Error("rate limited"), { statusCode: 429 }));
       mock.module("../lib/polar", () => ({ ...require("../lib/polar"), getPolarClient: () => throwingPolar }));
 
-      const html = renderToStaticMarkup(await billingPage.default());
+      /*
+       * The restore has to be in a finally. mock.module registers process-wide, so a failed
+       * assertion below would otherwise leak this throwing client into every later test in the
+       * file — reporting one broken test as a dozen, and hiding which one broke. That is the
+       * same leak that cost a CI run on PR #29.
+       */
+      try {
+        const html = renderToStaticMarkup(await billingPage.default());
 
-      expect(html).toContain("Invoice history unavailable right now.");
-      expect(html).not.toContain("No invoices yet.");
-
-      // Restore the ordinary fake for every test after this one.
-      mock.module("../lib/polar", () => ({
-        ...require("../lib/polar"),
-        getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
-      }));
+        expect(html).toContain("Invoice history unavailable right now.");
+        expect(html).not.toContain("No invoices yet.");
+      } finally {
+        mock.module("../lib/polar", () => ({
+          ...require("../lib/polar"),
+          getPolarClient: () =>
+            fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders, sessionPendingUpdate).client,
+        }));
+      }
     });
 
     test("never sends any id but the session's own to Polar", async () => {

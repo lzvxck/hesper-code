@@ -82,8 +82,11 @@ export type AccountPlan = {
  * rest of this function lives on does not carry `pending_update`. A pending update with no
  * product — a seats-only change — or one on a product this deployment cannot name is reported
  * as nothing scheduled rather than as a destination we would have to invent a label for.
+ *
+ * Exported because /billing has to ask the same question on the cached fast path, which returns
+ * before this is ever reached — see the repair in app/billing/page.tsx.
  */
-async function scheduledChange(
+export async function scheduledChange(
   deps: ProvisioningDeps,
   subscription: { id: string; cancelAtPeriodEnd: boolean; currentPeriodEnd: Date },
 ): Promise<ScheduledChange | null> {
@@ -129,6 +132,11 @@ export async function ensureProvisioned(
    * A scheduled cancellation cannot hide behind it: the webhook writes "canceled" the moment
    * one is scheduled, so such an account always falls through to Polar, which is the only
    * place the end date exists.
+   *
+   * A scheduled *plan change* always does hide behind it, and that immunity does not extend to
+   * it: only cancelAtPeriodEnd demotes the status the webhook writes, so a pending_update
+   * leaves the row active and mapped and this path is taken every time. `scheduled: null` below
+   * is therefore not "nothing is scheduled" — it is "not asked". /billing asks separately.
    *
    * What `storedPlan`'s conditions cannot catch is *staleness*. The row is written by the
    * webhook asynchronously, while a plan change answers 303 to this page immediately — so for

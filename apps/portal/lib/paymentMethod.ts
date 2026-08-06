@@ -38,7 +38,23 @@ export async function getPaymentMethod(
   if (!response.ok) throw new Error(`Polar payment-methods request failed with status ${response.status}`);
 
   const { items } = (await response.json()) as PolarPaymentMethodsResponse;
-  const metadata = items.find((item) => item.is_default)?.method_metadata;
+  /*
+   * The default if one is flagged, otherwise the sole card.
+   *
+   * What was actually observed, once, on 2026-08-06: one sandbox customer, holding one card
+   * attached during checkout, came back `is_default: false` — so reading the flag alone reported
+   * "No payment method on file." for a card that was demonstrably on file and being charged.
+   * Polar documents no rule for when a checkout-attached card gets flagged, so that is
+   * undocumented behaviour rather than a contract, and a single observation is what this rests
+   * on. Whether a card added through the embed comes back flagged is untested here — that embed
+   * cannot be exercised outside production (see app/UpdateCard.tsx), so nobody has seen one.
+   * Neither answer changes this rule: a flagged card still wins where there is one.
+   *
+   * With several cards and no flag this still returns null — there is nothing to name, and
+   * answering with items[0] would be an invented choice rather than a read.
+   */
+  const single = items.length === 1 ? items[0] : undefined;
+  const metadata = (items.find((item) => item.is_default) ?? single)?.method_metadata;
   if (!metadata) return null;
 
   return { brand: metadata.brand, last4: metadata.last4, expMonth: metadata.exp_month, expYear: metadata.exp_year };
