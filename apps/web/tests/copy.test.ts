@@ -15,9 +15,11 @@ const RENDERED = textNodes(renderToStaticMarkup(createElement(Home)));
 /*
  * The install tabs are the one region of this page rendering cannot reach. InstallTabs is a
  * Radix Tabs with defaultValue="macos", and Radix does not render the children of a closed
- * TabsContent — measured on the real render: three role="tabpanel" elements, and the markup
- * does not contain the string "powershell" at all. So the Windows command and the Linux and
- * Windows notes shipped as user-visible copy no pattern was ever tested against.
+ * TabsContent — measured on the real render: three role="tabpanel" elements, and 27,921 chars
+ * of markup holding neither "install.ps1" nor either of the two non-default notes. So the
+ * Windows command and the Linux and Windows notes shipped as user-visible copy no pattern was
+ * ever tested against. ("PowerShell" is in that markup, from the Supported platforms prose
+ * further down the page — which is why the absent strings, not that word, are the evidence.)
  *
  * Reading the array is the fix rather than rendering with forceMount, which would mount all
  * three panels in every visitor's DOM to suit a test. The array is already a module-level
