@@ -28,10 +28,12 @@ function formatCard(method: PaymentMethod): string {
 type Attempt<T> = { ok: true; value: T } | { ok: false };
 
 /*
- * The Polar org access token does not yet have `orders:read` or `customer_sessions:write`, and
- * even once it does, a 429 against the org-wide limit is always possible. Either failure must
- * degrade the one section that depends on it to a line of text — never the whole page — so
- * each call is wrapped here rather than left to throw into the nearest error boundary.
+ * The Polar org access token now carries `orders:read` and `customer_sessions:write` — both
+ * exercised against sandbox on 2026-08-06 — but a 429 against the org-wide limit shared with
+ * checkout and webhooks is always possible, and any one of these calls can fail on its own.
+ * Such a failure must degrade the one section that depends on it to a line of text — never
+ * the whole page — so each call is wrapped here rather than left to throw into the nearest
+ * error boundary.
  *
  * `ok: false` is deliberately distinct from a value of `null`: `getPaymentMethod` resolving to
  * `null` means Polar was asked and answered "no default method", which is a real empty state.
