@@ -5,7 +5,7 @@ import { expect, mock, test } from "bun:test";
 
 // A type-only import: erased before it runs, so it does not defeat the deferred import below.
 import type { ShellProps } from "@/app/Shell";
-import { PLANS, USAGE } from "@/lib/routes";
+import { BILLING, PLANS, USAGE } from "@/lib/routes";
 
 /*
  * Sign out is a server action, so importing Shell pulls in @workos-inc/authkit-nextjs, which
@@ -26,11 +26,16 @@ const inAppLinks = (current: ShellProps["current"]) =>
   ).match(/href="\/[^"]*"/g);
 
 /*
- * The bug this pins shipped: /usage rendered a "View usage" button pointing at the page it was
- * already on, and with the wordmark being an in-page anchor, nothing on it reached the plans
- * again — the account page was unreachable from the one link that led away from it.
+ * The bug this pinned shipped: /usage rendered a "View usage" button pointing at the page it
+ * was already on, and with the wordmark being an in-page anchor, nothing on it reached the
+ * plans again — the account page was unreachable from the one link that led away from it.
+ *
+ * Page switching now lives in SiteNav's own links, so all three pages carry the same ordered
+ * array regardless of which one is current — /api/portal is gone from it entirely, reachable
+ * only from the past-due banner on /billing.
  */
-test("each signed-in page links to the other one, never to itself", () => {
-  expect(inAppLinks("account")).toEqual([`href="${USAGE}"`, 'href="/api/portal"']);
-  expect(inAppLinks("usage")).toEqual([`href="${PLANS}"`, 'href="/api/portal"']);
+test("every signed-in page carries the same ordered nav, and no link to /api/portal", () => {
+  expect(inAppLinks("account")).toEqual([`href="${PLANS}"`, `href="${BILLING}"`, `href="${USAGE}"`]);
+  expect(inAppLinks("billing")).toEqual([`href="${PLANS}"`, `href="${BILLING}"`, `href="${USAGE}"`]);
+  expect(inAppLinks("usage")).toEqual([`href="${PLANS}"`, `href="${BILLING}"`, `href="${USAGE}"`]);
 });
