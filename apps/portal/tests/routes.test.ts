@@ -981,17 +981,24 @@ describe("route handlers", () => {
       throwingPolar.orders.list = () => Promise.reject(Object.assign(new Error("rate limited"), { statusCode: 429 }));
       mock.module("../lib/polar", () => ({ ...require("../lib/polar"), getPolarClient: () => throwingPolar }));
 
-      const html = renderToStaticMarkup(await billingPage.default());
+      /*
+       * The restore has to be in a finally. mock.module registers process-wide, so a failed
+       * assertion below would otherwise leak this throwing client into every later test in the
+       * file — reporting one broken test as a dozen, and hiding which one broke. That is the
+       * same leak that cost a CI run on PR #29.
+       */
+      try {
+        const html = renderToStaticMarkup(await billingPage.default());
 
-      expect(html).toContain("Invoice history unavailable right now.");
-      expect(html).not.toContain("No invoices yet.");
-
-      // Restore the ordinary fake for every test after this one.
-      mock.module("../lib/polar", () => ({
-        ...require("../lib/polar"),
-        getPolarClient: () =>
-          fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders, sessionPendingUpdate).client,
-      }));
+        expect(html).toContain("Invoice history unavailable right now.");
+        expect(html).not.toContain("No invoices yet.");
+      } finally {
+        mock.module("../lib/polar", () => ({
+          ...require("../lib/polar"),
+          getPolarClient: () =>
+            fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders, sessionPendingUpdate).client,
+        }));
+      }
     });
 
     test("never sends any id but the session's own to Polar", async () => {
