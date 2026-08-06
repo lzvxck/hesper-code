@@ -31,6 +31,24 @@ const OVERCLAIMS = [
  */
 const FUTURITY = [/roadmap/i, /\bsoon\b/i, /stage \d/i, /planned/i, /in the future/i];
 
+/*
+ * DELETE THIS AT LAUNCH. It exists only for the holding page the three sites serve while the
+ * agent is not available (loop `coming-soon-holding`, branch `coming-soon-holding`), and the
+ * intended way it goes away is reverting that PR — which removes the three /holding routes,
+ * the three proxy branches and this mask together. An exemption that outlives its reason is
+ * precisely the failure this package exists to prevent, so it is written to be found.
+ *
+ * The hole is as small as it can be made. It is an exact two-word phrase with word boundaries,
+ * not a loosening of `\bsoon\b`, and it is masked out only on the FUTURITY line below —
+ * OVERCLAIMS and UNSHIPPED are scanned against the unmasked copy, so "Coming soon — the first
+ * fully autonomous agent" still fails on the two claims it makes. Bare `soon` still fires:
+ * "available soon" and "landing soon" are rejected exactly as before.
+ *
+ * The replacement is a space rather than the empty string so that removing the phrase cannot
+ * fuse the words on either side of it into one the page never said.
+ */
+const COMING_SOON = /\bcoming soon\b/gi;
+
 /* Real, but not in the released binary — claiming any of it makes the page falsifiable. */
 const UNSHIPPED = [
   /daemon/i,
@@ -69,7 +87,7 @@ const found = (copy: string, patterns: RegExp[]) =>
  */
 export function assertClean(copy: string): void {
   expect(found(copy, OVERCLAIMS)).toEqual([]);
-  expect(found(copy, FUTURITY)).toEqual([]);
+  expect(found(copy.replace(COMING_SOON, " "), FUTURITY)).toEqual([]);
   expect(found(copy, UNSHIPPED)).toEqual([]);
 }
 
