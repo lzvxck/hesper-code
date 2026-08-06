@@ -51,11 +51,16 @@ the *boundary* is not.
 
 ---
 
-# Status and execution order — updated 2026-08-04
+# Status and execution order — updated 2026-08-06
 
 **Stage numbers are identities, not an order.** They are referenced from outside this file (e.g.
 `.claude/loops/hosted-accounts-billing-gateway/PHASE-A-HANDOFF.md` gates Phase B on "Stage 7"), so
 they do not get renumbered. The order below is what changed.
+
+**Reading that external reference after the 2026-08-06 split:** PHASE-A-HANDOFF's "Stage 7" means
+**7a**, the gateway half. Phase B needs the provider layer and the cost surface, not the oracle.
+That handoff file has not been edited — this is the mapping, stated here so the two do not have to
+be kept in sync.
 
 | Stage | State |
 |---|---|
@@ -78,15 +83,37 @@ hurt; it is that the TUI is now on the critical path.
 
 **New order:**
 
-1. **Abort/cancellation** — not a numbered stage; see Stage A below. Next.
+1. **Abort/cancellation** — not a numbered stage; see Stage A below. **Done** — PR #23.
 2. **Prompt tiers** — not a numbered stage; see Stage B below. Small, and it goes before Stage 5
    because everything after Stage 5 assembles prompts.
 3. **Stage 5** — verification loop (LSP diagnostics, edit-failure reflection).
-4. **Stage 6** — subagents, now including the `curator` learning pass.
-5. **Stage 7** — routing and provider breadth. Also unblocks billing Phase B.
-6. **Stage 11** — TUI and distribution. **Release gate: v0.1.0 ships here.**
-7. **Stages 8, 9, 10** — daemon, OS sandbox, extensibility. Post-release; each adds capability to a
+4. **Stage 7a** — the gateway half: OpenRouter breadth tier, Catwalk-style catalog, mid-session
+   model switching. **Moved ahead of Stage 6 (2026-08-06, user directive).** Unblocks billing
+   Phase B, the spend cap, and the portal's usage surface.
+5. **Stage 6** — subagents, now including the `curator` learning pass.
+6. **Stage 7b** — the routing-of-roles half: architect/editor split, oracle escalation. Stays
+   after Stage 6 because the oracle *is* a subagent — an isolated context with a restricted
+   toolset, which is the machinery Stage 6 builds.
+7. **Stage 11** — TUI and distribution. **Release gate: v0.1.0 ships here.**
+8. **Stages 8, 9, 10** — daemon, OS sandbox, extensibility. Post-release; each adds capability to a
    product that already exists, rather than being a condition for it existing.
+
+**Why 7a moved ahead of 6 (2026-08-06).** Two reasons, and the second is the one the plan already
+half-argued against itself:
+
+- **Nothing in 7a depends on Stage 6.** The OpenRouter adapter, the model catalog and mid-session
+  switching are provider-layer work. Only the oracle (and arguably the architect/editor split)
+  needs subagent machinery, and those are 7b.
+- **The old order made Stage 6 expensive and then fixed it afterward.** Stage 6 carries a 3–15×
+  token multiplier and 6b's curator compounds on top of it; the mitigation is a cheap auxiliary
+  model, which is exactly what 7a delivers. Under the old order 6 shipped first and 7 made it
+  affordable second. Under this order the routing table exists before 6b needs it, so the curator
+  is a routing target from birth rather than a retrofit — which is what Stage 7's own text always
+  claimed it would be ("one more entry in a routing table that already exists").
+
+**Cost in release date: none.** 5, 6 and 7 all sit before the Stage 11 release gate either way;
+this reorders work inside that block without adding or removing any of it. What changes is what is
+finished earliest — and that is the provider layer, which three separate things are waiting on.
 
 **Nothing from the Hermes survey gets its own stage, and nothing displaces the release gate** (added
 2026-08-04, after surveying Hermes Agent — see `ARCHITECTURE.md` Part I). It distributes into
@@ -96,7 +123,7 @@ slots that already exist:
 |---|---|---|
 | Prompt tiers | **Stage B** | before — prompt architecture, not a feature |
 | Memory store + `curator` role | **Stage 6b** | before — same machinery as Stage 6, marginal cost |
-| Curator on a cheap model | **Stage 7** | before — one more row in the routing table |
+| Curator on a cheap model | **Stage 7a** | before — and now genuinely "one more row in the routing table", since 7a lands before 6b builds the curator |
 | FTS5 cross-session search | **Stage 8** | after — needs the daemon's SQLite |
 | Agent-authored recipes | **Stage 10** | after — needs the recipe format to exist |
 
@@ -164,7 +191,7 @@ passed to `runLoop`). Split it into the three ordered tiers Hermes uses *[Hermes
 
 That is the whole change. **No memory is built here** — the tier exists and is empty. It is
 sequenced before Stage 5 for the same reason the client/server *boundary* was sequenced at Stage 0
-while the transport was deferred to Stage 8: it costs ~30 lines now, and after Stage 7 there are
+while the transport was deferred to Stage 8: it costs ~30 lines now, and after Stage 7b there are
 four prompt assemblers (main loop, architect, editor, oracle) instead of one. Prefix caching is the
 payoff and it is provider-visible — the ordering is what lets memory land later without
 invalidating the cache on every session.
@@ -318,13 +345,48 @@ The curator provably cannot edit a file or run a command — asserted against a 
 that tries to make it. A staged write is visible, diffable, and rejectable before it takes effect.
 Token cost per turn of running the curator is **measured** and reported, not assumed cheap.
 
-## Stage 7 — Routing and provider breadth
-OpenRouter breadth tier; architect/editor split *[Aider #1]*; oracle escalation with read-only tools
-*[Amp #1]*; mid-session model switching with context preserved *[Crush #1]*; Catwalk-style catalog.
+## Stage 7 — Routing and provider breadth  ·  **SPLIT: 7a runs before Stage 6, 7b after**
+
+### 7a — the gateway (before Stage 6)
+OpenRouter breadth tier; mid-session model switching with context preserved *[Crush #1]*;
+Catwalk-style catalog. Nothing here needs subagents, and three things are waiting on it: billing
+Phase B, the spend cap, and the portal's usage surface.
+
+**The catalog is the price table, and it is also not the price table** — both halves matter:
+- **Cost is provider-reported on this path, not computed.** OpenRouter returns `usage.cost` plus
+  `cost_details.upstream_inference_cost` on **every** response, always, with no opt-in (the old
+  `usage: { include: true }` parameter is deprecated and inert). The official
+  `@openrouter/ai-sdk-provider` surfaces it via `providerMetadata.openrouter`. So a dollar cap on
+  the OpenRouter path needs no price table at all. **This corrects PR #33's stated premise** that
+  "provider-reported cost does not exist on this path" — true for Groq direct, which reports only
+  tokens and times; false for OpenRouter.
+- **A price table is still needed for every non-OpenRouter path**, which is what
+  `GET /api/v1/models` is for: unauthenticated, ~400 models, per-token USD with fine-grained keys
+  (`prompt`, `completion`, `input_cache_read`, `input_cache_write`, `internal_reasoning`,
+  `web_search`, `image`, `audio`).
+- **Carry the provenance, not just the number.** Hermes' `agent/usage_pricing.py` tags every cost
+  with `CostStatus` (`actual` | `estimated` | `included` | `unknown`) and `CostSource`
+  (`provider_cost_api` | `provider_generation_api` | `provider_models_api` |
+  `official_docs_snapshot` | `user_override` | `custom_contract` | `none`). The models API is the
+  *third* rung, below real reported cost. A cap that halts a run at $5 has to know whether that
+  $5 was measured or guessed — killing a run on a bad estimate is worse than not capping.
+- **Do not use `/models` as the catalog of what to offer.** Hermes does not: its
+  `scripts/build_model_catalog.py` publishes a hand-curated manifest that the CLI fetches at
+  runtime, falling back to in-repo lists, and its own docstring says the manifest is "not a source
+  of truth". ~400 raw models is a firehose, and decoupling the offered list from a release is the
+  point.
+
+**Verify:** model switches mid-session without context loss; a run's dollar cost is reported with
+its provenance, and a cost tagged `estimated` is visibly distinguishable from one tagged `actual`.
+
+### 7b — routing of roles (after Stage 6)
+Architect/editor split *[Aider #1]*; oracle escalation with read-only tools *[Amp #1]*.
+Stays after Stage 6: the oracle is an isolated context with a restricted toolset, which is Stage
+6's machinery — the same argument that places 6b inside Stage 6 rather than beside it.
 The `curator` from 6b becomes a routing target like any other role — a cheap auxiliary model, which
 is what Hermes exposes as `auxiliary.background_review`. No new design; one more entry in a routing
-table that already exists.
-**Verify:** model switches mid-session without context loss; oracle cannot write.
+table that, after 7a, genuinely already exists.
+**Verify:** oracle cannot write.
 
 ## Stage 8 — Daemon  ·  **MOVED: post-release**
 `seri serve` — the transport across the boundary that has existed since Stage 0. Multi-session,
@@ -377,7 +439,7 @@ Progressive disclosure comes along with it: metadata-only listing, full body on 
 PreToolUse hook blocks a matching command deterministically. A curator-authored recipe is loadable,
 previewable, and visibly distinguishable from a human-authored one.
 
-## Stage 11 — TUI and distribution  ·  **MOVED: runs after Stage 7, and gates the release**
+## Stage 11 — TUI and distribution  ·  **MOVED: runs after Stage 7b, and gates the release**
 
 **TUI: Ink, rendering inline.** Not a full-screen alternate-buffer app. Two styles exist in this
 space and they are opposites — Claude Code renders **inline**, progressively into normal terminal
@@ -404,7 +466,7 @@ survives a session — prior output remains in terminal history after `seri` exi
 | Name | **Settled & shipped** | Seri, binary `seri`; lab is Seriora Research; repo `lzvxck/seri-agent`, apex `seriora.ai`. Rename landed 2026-08-04 (PR #14). |
 | TUI framework | **Settled** | Ink, inline rendering (Claude Code style, not OpenCode's full-screen). Work is incremental on Stage 2's output layer. |
 | Go MCP SDK maturity | No longer | Moot — TypeScript SDK is the reference. |
-| Curator token cost | Not yet | A learning pass per turn compounds on top of Stage 6's 3–15× subagent multiplier. Hermes pays for it with a warm prefix cache and a cheap auxiliary model; we get the second at Stage 7 and the first from Stage B. **Measure it at 6b before deciding the default is on.** |
+| Curator token cost | Not yet | A learning pass per turn compounds on top of Stage 6's 3–15× subagent multiplier. Hermes pays for it with a warm prefix cache and a cheap auxiliary model; we get the second at **Stage 7a, which now lands before Stage 6** (2026-08-06), and the first from Stage B. **Measure it at 6b before deciding the default is on** — the cheap model is available by then, so the measurement is of the real configuration rather than a placeholder. |
 | Curator trigger | Not yet | Turn count is the baseline. Firing on an approaching compaction threshold is the more principled trigger (Part II §9) and is untested — instrument it with the Stage 3 threshold measurement rather than guessing. |
 | Unattended permission surface | **Blocks scheduled runs** | What a run with no human present may do. Part V's long-horizon autonomy problem, arriving concretely at Stage 8. Read-and-report is the safe floor; unattended writes are unanswered. Decide before the scheduler exists, not after. |
 | Public positioning vs. constraint #3 | No | `README.md` and `AGENTS.md` say "coding-agent CLI". Deliberate — the assistant surfaces are post-release. Revisit when Stage 8 ships something a user can point at. |
