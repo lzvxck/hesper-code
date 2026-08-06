@@ -877,6 +877,18 @@ describe("route handlers", () => {
    * degrades its own section instead of throwing through the page.
    */
   describe("GET /billing", () => {
+    // The reported bug: on the ordinary cached load (an active, mapped account_status row —
+    // ensureProvisioned's fast path, which never asks Polar and returns renewsAt: null) the
+    // page rendered no renewal date at all for a steady-state paid subscriber.
+    test("renders the renewal date on the ordinary cached load, not just a fresh one", async () => {
+      accountStatusRow = { plan: "pro", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_pro")];
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("Renews");
+    });
+
     test("shows the past-due banner only when account_status says past_due", async () => {
       accountStatusRow = { plan: "pro", subscription_status: "past_due" };
       sessionSubscriptions = [sub("sub_session", "prod_pro")];

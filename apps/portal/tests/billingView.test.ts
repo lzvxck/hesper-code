@@ -5,6 +5,7 @@ import { allowanceSentence, invoiceRows, subscriptionSummary } from "../lib/bill
 import type { ScheduledChange } from "../lib/scheduled";
 
 const AT = new Date("2026-09-04T00:00:00Z");
+const AMOUNT_PRO = 2000; // cents — matches PLAN_MONTHLY_USD.pro ($20).
 
 // Fixed rather than locale-dependent, per accountView.test.ts.
 const formatDate = () => "4 September";
@@ -13,34 +14,40 @@ const ENDS: ScheduledChange = { kind: "ends", plan: "free", at: AT };
 const CHANGES: ScheduledChange = { kind: "changes", plan: "pro", at: AT };
 
 describe("subscriptionSummary", () => {
-  test("a plain, renewing subscription reports the renewal date", () => {
-    const summary = subscriptionSummary("pro", AT, null, formatDate);
+  test("a plain, renewing subscription reports the renewal date and the monthly price", () => {
+    const summary = subscriptionSummary("pro", AT, AMOUNT_PRO, null, formatDate);
     expect(summary.title).toBe("Pro");
+    expect(summary.price).toBe("$20.00/mo");
     expect(summary.state).toBe("Renews 4 September");
   });
 
   // A subscription that has never been asked for a renewal date — renewsAt only exists once
-  // Polar has been asked, and the fast path never asks.
+  // Polar has been asked, and the fast path never asks. `amount` comes from the same read, so
+  // it is null in exactly the same case.
   test("a plain subscription with no renewal date reports nothing rather than inventing one", () => {
-    expect(subscriptionSummary("pro", null, null, formatDate).state).toBe("");
+    const summary = subscriptionSummary("pro", null, null, null, formatDate);
+    expect(summary.state).toBe("");
+    expect(summary.price).toBe("");
   });
 
   test("a pending cancellation reports its end date instead of a renewal", () => {
-    const summary = subscriptionSummary("pro", AT, ENDS, formatDate);
+    const summary = subscriptionSummary("pro", AT, AMOUNT_PRO, ENDS, formatDate);
     expect(summary.state).toBe("Ends 4 September");
   });
 
   test("a booked downgrade names both ends of the move", () => {
-    const summary = subscriptionSummary("max", AT, CHANGES, formatDate);
+    const summary = subscriptionSummary("max", AT, 10000, CHANGES, formatDate);
     expect(summary.state).toBe("Max until 4 September, then Pro");
   });
 
   // The retired-product case: an active subscription on a product this deployment has no
-  // mapping for. Nothing is known about what they hold, so no allowance figure may appear.
+  // mapping for. Nothing is known about what they hold, so no allowance figure or price may
+  // appear.
   test("an unrecognized product gets the retired-product copy and no allowance figure", () => {
-    const summary = subscriptionSummary(null, null, null, formatDate);
+    const summary = subscriptionSummary(null, null, null, null, formatDate);
     expect(summary.title).toBe("Plan not recognized");
     expect(summary.allowanceLine).toBe("");
+    expect(summary.price).toBe("");
     expect(summary.state).not.toContain("$");
   });
 });

@@ -1,3 +1,5 @@
+import type { Polar } from "@polar-sh/sdk";
+import { isPaidPlan, type Plan } from "@seri/plans";
 import { Button } from "@seri/ui";
 
 import { Shell } from "@/app/Shell";
@@ -7,10 +9,11 @@ import { invoiceRows, subscriptionSummary } from "@/lib/billingView";
 import { createCustomerSession } from "@/lib/customerSession";
 import { listOrders } from "@/lib/orders";
 import { getPaymentMethod, type PaymentMethod } from "@/lib/paymentMethod";
-import { getPolarClient } from "@/lib/polar";
+import { getCustomerState, getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
 import { getSupabaseClient } from "@/lib/supabase";
+import { type ActiveSubscription, paidSubscription } from "@/lib/subscriptions";
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
@@ -44,23 +47,56 @@ async function attempt<T>(section: string, fn: () => Promise<T>): Promise<Attemp
   }
 }
 
+const NO_LIVE_SUBSCRIPTION: Attempt<ActiveSubscription | null> = { ok: true, value: null };
+
+/*
+ * `ensureProvisioned`'s cached fast path — an active, mapped `account_status` row, the ordinary
+ * steady-state load — never asks Polar at all, and deliberately returns `renewsAt: null` and
+ * `amount: null` there. That is also this page's most common case, so it asks separately for
+ * exactly that display data, composing the same two helpers `ensureProvisioned` itself uses
+ * (`getCustomerState`, `paidSubscription`) rather than forcing a cache-skipping option through
+ * it — `fresh` there means "this load follows a change the customer just made" and has to stay
+ * that way, or the repair path below it stops being reachable from every ordinary load.
+ *
+ * Matching against the already-known `plan` is deliberate: this may only extend what
+ * `ensureProvisioned` returned, never contradict it. A race that changed the plan between the
+ * two calls must not show one plan's title next to another plan's renewal date and price.
+ */
+async function liveSubscription(
+  polar: Polar,
+  userId: string,
+  plan: Plan | null,
+): Promise<ActiveSubscription | null> {
+  const state = await getCustomerState(polar, userId);
+  const paid = paidSubscription(state?.activeSubscriptions ?? [], process.env);
+  return paid?.plan === plan ? paid.subscription : null;
+}
+
 export default async function BillingPage() {
   const user = await getSessionUser();
   const supabase = getSupabaseClient();
   const polar = getPolarClient();
 
-  const [{ plan, scheduled, renewsAt }, accountStatus] = await Promise.all([
+  const [{ plan, scheduled, renewsAt, amount }, accountStatus] = await Promise.all([
     ensureProvisioned({ supabase, polar, products: process.env }, user),
     readAccountStatus(supabase, user.userId),
   ]);
 
-  const [paymentMethod, orders, session] = await Promise.all([
+  // Only the cached fast path leaves renewsAt null on a recognized paid plan — every other
+  // path already asked Polar and has both fields.
+  const needsLive = renewsAt === null && isPaidPlan(plan);
+
+  const [paymentMethod, orders, session, live] = await Promise.all([
     attempt("payment method", () => getPaymentMethod(user.userId)),
     attempt("invoice history", () => listOrders(polar, user.userId)),
     attempt("payment-method update session", () => createCustomerSession(polar, user.userId)),
+    needsLive ? attempt("renewal date", () => liveSubscription(polar, user.userId, plan)) : NO_LIVE_SUBSCRIPTION,
   ]);
 
-  const summary = subscriptionSummary(plan, renewsAt, scheduled, formatDate);
+  const effectiveRenewsAt = renewsAt ?? (live.ok ? (live.value?.currentPeriodEnd ?? null) : null);
+  const effectiveAmount = amount ?? (live.ok ? (live.value?.amount ?? null) : null);
+
+  const summary = subscriptionSummary(plan, effectiveRenewsAt, effectiveAmount, scheduled, formatDate);
 
   return (
     <Shell email={user.email} current="billing">
@@ -87,6 +123,7 @@ export default async function BillingPage() {
 
       <section className="mt-29 md:mt-34">
         <h2 className="font-mono text-mono font-bold tracking-[-0.4px]">{summary.title}</h2>
+        {summary.price && <p className="mt-8 text-ink-subtle">{summary.price}</p>}
         {summary.state && <p className="mt-8 text-ink-subtle">{summary.state}</p>}
         {/* No progress bar: nothing is measured yet, so this is a sentence, not a ratio. */}
         {summary.allowanceLine && <p className="mt-8 text-ink-subtle">{summary.allowanceLine}</p>}
