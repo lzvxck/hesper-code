@@ -40,6 +40,29 @@ describe("subscriptionSummary", () => {
     expect(summary.state).toBe("Max until 4 September, then Pro");
   });
 
+  /*
+   * The third input state, and it is not a third kind of scheduled change: it is the
+   * pending-update read having failed while the read that produced the date and the price
+   * succeeded. Falling through to "Renews 4 September" would assert the one thing that could
+   * not be checked — a customer with a booked downgrade would be told they renew on the plan
+   * they are leaving, which is the defect this page exists to have fixed.
+   */
+  test("a scheduled change that could not be read is named, never rendered as a renewal", () => {
+    const summary = subscriptionSummary("max", AT, 10000, "unknown", formatDate);
+    expect(summary.state).toBe("Next billing date 4 September. Scheduled changes unavailable right now.");
+    expect(summary.state).not.toContain("Renews");
+    // Both survived the failure — they came from the call that worked.
+    expect(summary.price).toBe("$100.00/mo");
+    expect(summary.allowanceLine).toBe(allowanceSentence("max"));
+  });
+
+  // Totality, not a page state: the page cannot reach "unknown" without a date, because the same
+  // call supplies both. Mirrors the renewsAt-less case above rather than inventing copy for it.
+  test("a scheduled change that could not be read still says so with no date to show", () => {
+    const summary = subscriptionSummary("max", null, null, "unknown", formatDate);
+    expect(summary.state).toBe("Scheduled changes unavailable right now.");
+  });
+
   // The retired-product case: an active subscription on a product this deployment has no
   // mapping for. Nothing is known about what they hold, so no allowance figure or price may
   // appear.

@@ -933,18 +933,31 @@ describe("route handlers", () => {
     /*
      * The pending-update read is a second, independent Polar call, and getSubscription has none
      * of getCustomerState's 404 tolerance — a plan change made in another tab between the two
-     * can 404 it. Losing it must cost the scheduled line only: blanking the renewal date and
-     * the price for a paying customer would be worse than never having asked.
+     * can 404 it, and this PR makes that likelier by adding a fifth call to every load.
+     *
+     * Losing it must cost the scheduled line and only the scheduled line. The first version of
+     * this test asserted "Renews" here, which pinned the defect: degrading to `scheduled: null`
+     * renders a plain renewal, so a customer with a booked downgrade was told they renew on the
+     * plan they are leaving — the exact affirmative false statement this PR removes elsewhere.
      */
-    test("keeps the renewal date and price when the pending-update read fails", async () => {
+    test("says the scheduled change could not be checked, rather than claiming a renewal", async () => {
       accountStatusRow = { plan: "max", subscription_status: "active" };
       sessionSubscriptions = [sub("sub_session", "prod_max")];
       sessionPendingUpdate = Object.assign(new Error("polar responded 404"), { statusCode: 404 });
 
       const html = renderToStaticMarkup(await billingPage.default());
 
-      expect(html).toContain("Renews");
+      // No claim about what happens at the period end, in the page's own degradation voice.
+      expect(html).not.toContain("Renews");
+      expect(html).toContain("Scheduled changes unavailable right now.");
+      // The price and the period end came from getCustomerState, which succeeded. Blanking them
+      // would be the regression this test's previous version was written to catch.
       expect(html).toContain("$20.00/mo");
+      expect(html).toMatch(/Next billing date \d+ \w+/);
+      // A cancellation cannot be lost this way — scheduledChange answers "ends" from
+      // cancelAtPeriodEnd before it makes any call — so "unknown" must not hide the Cancel
+      // button the way a real "ends" does.
+      expect(html).toContain("Cancel subscription");
     });
 
     /*

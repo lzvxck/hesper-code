@@ -49,9 +49,22 @@ async function attempt<T>(section: string, fn: () => Promise<T>): Promise<Attemp
   }
 }
 
-type LiveSubscription = { subscription: ActiveSubscription; scheduled: ScheduledChange | null };
+type LiveSubscription = { subscription: ActiveSubscription; scheduled: Attempt<ScheduledChange | null> };
 
 const NO_LIVE_SUBSCRIPTION: Attempt<LiveSubscription | null> = { ok: true, value: null };
+
+/*
+ * Three answers, not two, and keeping them apart is the whole point of this function: a change,
+ * nothing scheduled, and "could not ask". Only the cached path can produce the third, because
+ * only there is the pending-update read a separate call that can fail while the date and the
+ * price survive. Collapsing it into `null` would hand `subscriptionSummary` the same input as
+ * "asked, nothing scheduled" — which renders a plain renewal, an affirmative claim about
+ * precisely the thing that could not be checked.
+ */
+function liveScheduled(live: LiveSubscription | null): ScheduledChange | null | "unknown" {
+  if (!live) return null;
+  return live.scheduled.ok ? live.scheduled.value : "unknown";
+}
 
 /*
  * `ensureProvisioned`'s cached fast path — an active, mapped `account_status` row, the ordinary
@@ -85,7 +98,9 @@ const NO_LIVE_SUBSCRIPTION: Attempt<LiveSubscription | null> = { ok: true, value
  * That second call gets its own `attempt` rather than riding on the caller's. `getSubscription`
  * has none of `getCustomerState`'s 404 tolerance, so a plan change made in another tab between
  * the two calls can fail it on its own — and letting that failure blank the renewal date and the
- * price for a paying customer would be a worse page than the one that never asked.
+ * price for a paying customer would be a worse page than the one that never asked. The `Attempt`
+ * is handed up unflattened rather than resolved to `null` here: the caller has to be able to
+ * tell "nothing is scheduled" from "could not check".
  *
  * Matching against the already-known `plan` is deliberate: this may only extend what
  * `ensureProvisioned` returned, never contradict it. A race that changed the plan between the
@@ -99,8 +114,10 @@ async function liveSubscription(
   const state = await getCustomerState(deps.polar, userId);
   const paid = paidSubscription(state?.activeSubscriptions ?? [], deps.products);
   if (!paid || paid.plan !== plan) return null;
-  const scheduled = await attempt("scheduled plan change", () => scheduledChange(deps, paid.subscription));
-  return { subscription: paid.subscription, scheduled: scheduled.ok ? scheduled.value : null };
+  return {
+    subscription: paid.subscription,
+    scheduled: await attempt("scheduled plan change", () => scheduledChange(deps, paid.subscription)),
+  };
 }
 
 export default async function BillingPage() {
@@ -131,7 +148,17 @@ export default async function BillingPage() {
   const liveValue = live.ok ? live.value : null;
   const effectiveRenewsAt = renewsAt ?? liveValue?.subscription.currentPeriodEnd ?? null;
   const effectiveAmount = amount ?? liveValue?.subscription.amount ?? null;
-  const effectiveScheduled = scheduled ?? liveValue?.scheduled ?? null;
+  const effectiveScheduled = scheduled ?? liveScheduled(liveValue);
+
+  /*
+   * A cancellation can never arrive as "unknown": `scheduledChange` answers "ends" from
+   * `cancelAtPeriodEnd`, which `getCustomerState` already carried, before it makes any call. So
+   * a failed pending-update read cannot hide one, and Cancel stays offered under "unknown" —
+   * this is a typed check rather than `effectiveScheduled?.kind`, which on a string would read
+   * a property that does not exist and silently answer "not a cancellation" for the wrong
+   * reason.
+   */
+  const cancellationScheduled = effectiveScheduled !== "unknown" && effectiveScheduled?.kind === "ends";
 
   const summary = subscriptionSummary(plan, effectiveRenewsAt, effectiveAmount, effectiveScheduled, formatDate);
 
@@ -170,7 +197,7 @@ export default async function BillingPage() {
          * ladder on `/` cannot. Hidden once a cancellation is already scheduled — Resume there
          * is what calls it off — and for Free, which has nothing to cancel.
          */}
-        {plan !== "free" && effectiveScheduled?.kind !== "ends" && (
+        {plan !== "free" && !cancellationScheduled && (
           <form action="/api/cancel" method="post" className="mt-11">
             <Button type="submit" variant="outline" size="sm">
               Cancel subscription
