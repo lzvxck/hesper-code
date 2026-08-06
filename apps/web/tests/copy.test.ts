@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "bun:test";
 
 import { assertClean, textNodes } from "@seri/copy-policy";
+import Holding from "../app/holding/page";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
 import { PLATFORMS } from "../components/InstallTabs";
@@ -39,6 +40,18 @@ const META = `${metadata.title} ${metadata.description}`;
 describe("apps/web copy", () => {
   test("says nothing the copy policy forbids", () => {
     assertClean(`${COPY} ${META}`);
+  });
+
+  /*
+   * The holding page proxy.ts rewrites `/` to while SERI_COMING_SOON is set. It is held to the
+   * same policy as the page it stands in for, including the layout metadata a visitor still
+   * gets served underneath it, and it is asserted here rather than in packages/ui because this
+   * is where this site's real props for <ComingSoon> are written.
+   */
+  test("the holding page says nothing the copy policy forbids", () => {
+    assertClean(`${textNodes(renderToStaticMarkup(createElement(Holding)))} ${META}`, {
+      allowComingSoon: true,
+    });
   });
 
   // D7: the gate and the bound are what make the learning claim checkable, so both are pinned.

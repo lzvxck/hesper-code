@@ -31,6 +31,31 @@ const OVERCLAIMS = [
  */
 const FUTURITY = [/roadmap/i, /\bsoon\b/i, /stage \d/i, /planned/i, /in the future/i];
 
+/*
+ * DELETE THIS AT LAUNCH. It exists only for the holding page the three sites serve while the
+ * agent is not available (loop `coming-soon-holding`, branch `coming-soon-holding`), and the
+ * intended way it goes away is reverting that PR — which removes the three /holding routes,
+ * the three proxy branches and this mask together. An exemption that outlives its reason is
+ * precisely the failure this package exists to prevent, so it is written to be found.
+ *
+ * The hole is bounded three ways, not one.
+ *
+ * By phrase: an exact two-word match with word boundaries, not a loosening of `\bsoon\b`.
+ * By list: masked out on the FUTURITY line only, so OVERCLAIMS and UNSHIPPED still scan the
+ * unmasked copy and "Coming soon — the first fully autonomous agent" fails on both claims it
+ * makes. Bare `soon` still fires — "available soon" and "landing soon" are rejected as before.
+ * By SURFACE: callers opt in with `{ allowComingSoon: true }` and the default is off, so the
+ * three holding cases get it and the lab and web homepage cases — which call `assertClean` the
+ * same way and go through the same function — do not. Without the opt-in the marketing
+ * homepages could say "Coming soon" with both suites green, which is wider than the holding
+ * page asks for and wider than the precedent this follows (the prior loop scoped its one
+ * futurity exception by surface and exact phrase rather than by loosening a pattern).
+ *
+ * The replacement is a space rather than the empty string so that removing the phrase cannot
+ * fuse the words on either side of it into one the page never said.
+ */
+const COMING_SOON = /\bcoming soon\b/gi;
+
 /* Real, but not in the released binary — claiming any of it makes the page falsifiable. */
 const UNSHIPPED = [
   /daemon/i,
@@ -66,10 +91,14 @@ const found = (copy: string, patterns: RegExp[]) =>
  * it in itself, as apps/web now does with InstallTabs' PLATFORMS. The other edge: the same
  * function throws outright on an async server component, so this technique has a real boundary
  * — every page it is used on today is sync.
+ *
+ * `allowComingSoon` defaults to false so the four existing call sites keep their exact
+ * behaviour without being edited; only the three holding cases pass it. See COMING_SOON above
+ * for why the exemption is scoped by surface and not only by phrase.
  */
-export function assertClean(copy: string): void {
+export function assertClean(copy: string, { allowComingSoon = false } = {}): void {
   expect(found(copy, OVERCLAIMS)).toEqual([]);
-  expect(found(copy, FUTURITY)).toEqual([]);
+  expect(found(allowComingSoon ? copy.replace(COMING_SOON, " ") : copy, FUTURITY)).toEqual([]);
   expect(found(copy, UNSHIPPED)).toEqual([]);
 }
 

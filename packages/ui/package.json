@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./holding-flag": "./src/holding-flag.ts",
     "./styles.css": "./styles/globals.css"
   },
   "scripts": {
