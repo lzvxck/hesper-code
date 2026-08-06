@@ -206,7 +206,7 @@ describe("ensureProvisioned", () => {
 
     expect(calls.some((call) => call.method === "subscriptions.create")).toBe(false);
     expect(claims.size).toBe(0);
-    expect(result).toEqual({ plan: "free", scheduled: null });
+    expect(result).toEqual({ plan: "free", scheduled: null, renewsAt: null, amount: null });
   });
 
   /*
@@ -221,7 +221,7 @@ describe("ensureProvisioned", () => {
 
     const result = await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER, { fresh: true });
 
-    expect(result).toEqual({ plan: null, scheduled: null });
+    expect(result).toEqual({ plan: null, scheduled: null, renewsAt: null, amount: null });
   });
 
   /*
@@ -325,6 +325,8 @@ describe("ensureProvisioned", () => {
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "max",
       scheduled: { kind: "changes", plan: "pro", at: PERIOD_END },
+      renewsAt: PERIOD_END,
+      amount: 2000,
     });
   });
 
@@ -371,6 +373,8 @@ describe("ensureProvisioned", () => {
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "free",
       scheduled: null,
+      renewsAt: null,
+      amount: null,
     });
     expect(calls.map((call) => call.method)).toEqual([
       "customers.getStateExternal",
@@ -416,6 +420,8 @@ describe("ensureProvisioned", () => {
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "pro",
       scheduled: { kind: "ends", plan: "free", at: PERIOD_END },
+      renewsAt: PERIOD_END,
+      amount: 2000,
     });
   });
 
@@ -426,6 +432,8 @@ describe("ensureProvisioned", () => {
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "pro",
       scheduled: null,
+      renewsAt: PERIOD_END,
+      amount: 2000,
     });
   });
 
@@ -576,6 +584,8 @@ describe("ensureProvisioned under concurrent renders", () => {
     expect(await ensureProvisioned({ supabase, polar, products: PRODUCTS }, USER)).toEqual({
       plan: "free",
       scheduled: null,
+      renewsAt: null,
+      amount: null,
     });
     expect(creates()).toBe(0);
   });
