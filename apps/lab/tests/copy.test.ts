@@ -6,6 +6,12 @@ import { describe, expect, test } from "bun:test";
 import { assertClean, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
+import { ProductList, type Product } from "../app/ProductList";
+
+const FIXTURES: Product[] = [
+  { name: "one", href: "https://example.com/one", body: "The first product." },
+  { name: "two", href: "https://example.com/two", body: "The second product." },
+];
 
 // Why the page is rendered rather than read as source, and what rendering does not cover, are
 // both on assertClean.
@@ -53,9 +59,24 @@ describe("seriora.ai copy", () => {
     expect(textNodes(main![0].replace(products![0], ""))).not.toMatch(/\bseri\b/i);
   });
 
-  test("puts the products in a grid that takes a second entry unchanged", () => {
-    const grid = MARKUP.match(/<ul id="products"[^>]*>/);
-    expect(grid).not.toBeNull();
-    expect(grid![0]).toContain("md:grid-cols-2");
+  /*
+   * The lab ships one product and its neutrality criterion is that a second needs no rewrite,
+   * so the list is rendered with two fixture entries and the claim asserted directly. This
+   * used to assert `toContain("md:grid-cols-2")` on the rendered <ul>, which went red on any
+   * restyle and did not test its own name: a class says nothing about whether a second entry
+   * arrives as a sibling of the first or needs the section rebuilt around it.
+   */
+  test("puts the products in a list that takes a second entry unchanged", () => {
+    const render = (products: Product[]) =>
+      renderToStaticMarkup(createElement(ProductList, { products }));
+
+    const one = render([FIXTURES[0]!]);
+    const two = render(FIXTURES);
+
+    // The container is byte-identical either way: nothing about the list is per-count.
+    expect(two.slice(0, two.indexOf(">") + 1)).toBe(one.slice(0, one.indexOf(">") + 1));
+    // And the second entry is a sibling of the first, carrying its own copy.
+    expect(two.match(/<li\b/g)).toHaveLength(2);
+    expect(textNodes(two)).toContain("The second product.");
   });
 });
