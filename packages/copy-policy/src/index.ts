@@ -40,13 +40,30 @@ export const UNSHIPPED = [
 export const found = (copy: string, patterns: RegExp[]) =>
   patterns.filter((pattern) => pattern.test(copy));
 
-const ENTITIES: Record<string, string> = {
+/*
+ * React's five escapes, and the pattern that finds them, from one list.
+ *
+ * They used to be two hand-maintained lists that had to agree — an alternation spelling the
+ * names and a table keyed by them — with `Record<string, string>` typing every lookup as
+ * `string` and `noUncheckedIndexedAccess` off in all three app tsconfigs, so a name in the
+ * alternation with no row in the table type-checked and spliced the word "undefined" into the
+ * copy under test. Measured on the old code: `"a&nbsp;b"` scanned with `&nbsp;` added to the
+ * alternation only came back `"aundefinedb"`.
+ *
+ * `as const satisfies` is what makes the index a union of the five keys rather than `string`,
+ * and the cast below is sound because the pattern is built from those same keys.
+ */
+const ENTITIES = {
   "&amp;": "&",
   "&lt;": "<",
   "&gt;": ">",
   "&quot;": '"',
   "&#x27;": "'",
-};
+} as const satisfies Record<string, string>;
+
+// No key holds a regex metacharacter, so the alternation is the keys verbatim. One pass over
+// the string rather than one pass per entity, so `&amp;lt;` decodes to `&lt;` and not to `<`.
+const ENTITY = new RegExp(Object.keys(ENTITIES).join("|"), "g");
 
 /*
  * Rendered markup down to its text nodes. Tags go first, so class names and hrefs are never
@@ -64,7 +81,7 @@ const ENTITIES: Record<string, string> = {
 export function textNodes(markup: string): string {
   return markup
     .replace(/<[^>]*>/g, " ")
-    .replace(/&(?:amp|lt|gt|quot|#x27);/g, (entity) => ENTITIES[entity])
+    .replace(ENTITY, (entity) => ENTITIES[entity as keyof typeof ENTITIES])
     .replace(/\s+/g, " ")
     .trim();
 }
