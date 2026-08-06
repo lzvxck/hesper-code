@@ -43,6 +43,9 @@ function fakePolar(
   updateError?: unknown,
   calls: { method: string; args: unknown }[] = [],
   orders: { id: string }[] = [],
+  // Only `subscriptions.get` carries pending_update — customer state does not — so a scheduled
+  // plan change can only be set up here. Null unless a test says otherwise.
+  pendingUpdate: { productId: string; appliesAt: Date } | null = null,
 ) {
   const client = {
     checkouts: {
@@ -60,7 +63,7 @@ function fakePolar(
     subscriptions: {
       get: (args: unknown) => {
         calls.push({ method: "subscriptions.get", args });
-        return Promise.resolve({ id: (args as { id: string }).id, pendingUpdate: null });
+        return Promise.resolve({ id: (args as { id: string }).id, pendingUpdate });
       },
       update: (args: unknown) => {
         calls.push({ method: "subscriptions.update", args });
@@ -583,6 +586,8 @@ describe("route handlers", () => {
   let sessionSubscriptions: ActiveSubscription[] = [];
   // The session's own orders, for /api/invoice and /billing.
   let sessionOrders: ReturnType<typeof order>[] = [];
+  // A plan change Polar has already accepted for the session's subscription, if any.
+  let sessionPendingUpdate: { productId: string; appliesAt: Date } | null = null;
   // account_status for the session; /billing's ensureProvisioned and its own past-due read
   // both go through this same row.
   let accountStatusRow: { plan: string; subscription_status: string } | null = {
@@ -654,7 +659,8 @@ describe("route handlers", () => {
     }));
     mock.module("../lib/polar", () => ({
       ...require("../lib/polar"),
-      getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
+      getPolarClient: () =>
+        fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders, sessionPendingUpdate).client,
     }));
     // getPaymentMethod's own parsing is covered by paymentMethod.test.ts's injected fetch;
     // stubbed here so /billing's render never reaches the real `fetch` this default-less call
@@ -691,6 +697,7 @@ describe("route handlers", () => {
   beforeEach(() => {
     polarCalls.length = 0;
     sessionOrders = [];
+    sessionPendingUpdate = null;
     accountStatusRow = { plan: "pro", subscription_status: "active" };
   });
 
@@ -901,6 +908,24 @@ describe("route handlers", () => {
       expect(html).toContain("Renews");
     });
 
+    /*
+     * The same fast path, one step further. A pending product update never demotes
+     * subscription_status — only cancelAtPeriodEnd does — so the row stays active and mapped
+     * and the cached path is always taken, which used to mean a customer dropping to Pro was
+     * told they renew on Max. The date itself is left out of the assertion for the same
+     * timezone reason the sibling above leaves it out.
+     */
+    test("renders a scheduled plan change on the ordinary cached load", async () => {
+      accountStatusRow = { plan: "max", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_max")];
+      sessionPendingUpdate = { productId: "prod_pro", appliesAt: PERIOD_END };
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("then Pro");
+      expect(html).not.toContain("Renews");
+    });
+
     test("shows the past-due banner only when account_status says past_due", async () => {
       accountStatusRow = { plan: "pro", subscription_status: "past_due" };
       sessionSubscriptions = [sub("sub_session", "prod_pro")];
@@ -927,7 +952,8 @@ describe("route handlers", () => {
       // Restore the ordinary fake for every test after this one.
       mock.module("../lib/polar", () => ({
         ...require("../lib/polar"),
-        getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
+        getPolarClient: () =>
+          fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders, sessionPendingUpdate).client,
       }));
     });
 

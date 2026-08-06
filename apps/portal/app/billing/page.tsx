@@ -1,4 +1,3 @@
-import type { Polar } from "@polar-sh/sdk";
 import { isPaidPlan, type Plan } from "@seri/plans";
 import { Button } from "@seri/ui";
 
@@ -10,7 +9,8 @@ import { createCustomerSession } from "@/lib/customerSession";
 import { listOrders } from "@/lib/orders";
 import { getPaymentMethod, type PaymentMethod } from "@/lib/paymentMethod";
 import { getCustomerState, getPolarClient } from "@/lib/polar";
-import { ensureProvisioned } from "@/lib/provisioning";
+import { ensureProvisioned, type ProvisioningDeps, scheduledChange } from "@/lib/provisioning";
+import type { ScheduledChange } from "@/lib/scheduled";
 import { getSessionUser } from "@/lib/session";
 import { getSupabaseClient } from "@/lib/supabase";
 import { type ActiveSubscription, paidSubscription } from "@/lib/subscriptions";
@@ -49,38 +49,56 @@ async function attempt<T>(section: string, fn: () => Promise<T>): Promise<Attemp
   }
 }
 
-const NO_LIVE_SUBSCRIPTION: Attempt<ActiveSubscription | null> = { ok: true, value: null };
+type LiveSubscription = { subscription: ActiveSubscription; scheduled: ScheduledChange | null };
+
+const NO_LIVE_SUBSCRIPTION: Attempt<LiveSubscription | null> = { ok: true, value: null };
 
 /*
  * `ensureProvisioned`'s cached fast path — an active, mapped `account_status` row, the ordinary
- * steady-state load — never asks Polar at all, and deliberately returns `renewsAt: null` and
- * `amount: null` there. That is also this page's most common case, so it asks separately for
- * exactly that display data, composing the same two helpers `ensureProvisioned` itself uses
- * (`getCustomerState`, `paidSubscription`) rather than forcing a cache-skipping option through
- * it — `fresh` there means "this load follows a change the customer just made" and has to stay
- * that way, or the repair path below it stops being reachable from every ordinary load.
+ * steady-state load — never asks Polar at all, and deliberately returns `renewsAt: null`,
+ * `amount: null` and `scheduled: null` there. That is also this page's most common case, so it
+ * asks separately for exactly that display data, composing the same helpers `ensureProvisioned`
+ * itself uses (`getCustomerState`, `paidSubscription`, `scheduledChange`) rather than forcing a
+ * cache-skipping option through it — `fresh` there means "this load follows a change the
+ * customer just made" and has to stay that way, or the repair path below it stops being
+ * reachable from every ordinary load.
+ *
+ * `scheduled` is here because a pending plan change hides behind that fast path permanently
+ * rather than momentarily: only `cancel_at_period_end` demotes the status the webhook writes, so
+ * a subscription carrying a `pending_update` stays active and mapped and the cache answers every
+ * time. Measured on 2026-08-06: the same subscription read "Renews 4 September" on an ordinary
+ * load and "Max until 4 September, then Pro" minutes later with the cache skipped.
+ *
+ * The cost, stated rather than buried: `scheduledChange` makes a second Polar round trip
+ * (`subscriptions.get`, the only call that carries `pending_update` — customer state does not),
+ * so a steady-state /billing load for a paid customer goes from one Polar call to two. It
+ * short-circuits without that trip when a cancellation is already scheduled. Persisting the
+ * pending update into `account_status` would be cheaper at runtime and costs a column, a
+ * migration and a second writer of a deliberately single-writer table.
  *
  * Matching against the already-known `plan` is deliberate: this may only extend what
  * `ensureProvisioned` returned, never contradict it. A race that changed the plan between the
  * two calls must not show one plan's title next to another plan's renewal date and price.
  */
 async function liveSubscription(
-  polar: Polar,
+  deps: ProvisioningDeps,
   userId: string,
   plan: Plan | null,
-): Promise<ActiveSubscription | null> {
-  const state = await getCustomerState(polar, userId);
-  const paid = paidSubscription(state?.activeSubscriptions ?? [], process.env);
-  return paid?.plan === plan ? paid.subscription : null;
+): Promise<LiveSubscription | null> {
+  const state = await getCustomerState(deps.polar, userId);
+  const paid = paidSubscription(state?.activeSubscriptions ?? [], deps.products);
+  if (!paid || paid.plan !== plan) return null;
+  return { subscription: paid.subscription, scheduled: await scheduledChange(deps, paid.subscription) };
 }
 
 export default async function BillingPage() {
   const user = await getSessionUser();
   const supabase = getSupabaseClient();
   const polar = getPolarClient();
+  const deps = { supabase, polar, products: process.env };
 
   const [{ plan, scheduled, renewsAt, amount }, accountStatus] = await Promise.all([
-    ensureProvisioned({ supabase, polar, products: process.env }, user),
+    ensureProvisioned(deps, user),
     readAccountStatus(supabase, user.userId),
   ]);
 
@@ -92,13 +110,14 @@ export default async function BillingPage() {
     attempt("payment method", () => getPaymentMethod(user.userId)),
     attempt("invoice history", () => listOrders(polar, user.userId)),
     attempt("payment-method update session", () => createCustomerSession(polar, user.userId)),
-    needsLive ? attempt("renewal date", () => liveSubscription(polar, user.userId, plan)) : NO_LIVE_SUBSCRIPTION,
+    needsLive ? attempt("renewal date", () => liveSubscription(deps, user.userId, plan)) : NO_LIVE_SUBSCRIPTION,
   ]);
 
-  const effectiveRenewsAt = renewsAt ?? (live.ok ? (live.value?.currentPeriodEnd ?? null) : null);
-  const effectiveAmount = amount ?? (live.ok ? (live.value?.amount ?? null) : null);
+  const effectiveRenewsAt = renewsAt ?? (live.ok ? (live.value?.subscription.currentPeriodEnd ?? null) : null);
+  const effectiveAmount = amount ?? (live.ok ? (live.value?.subscription.amount ?? null) : null);
+  const effectiveScheduled = scheduled ?? (live.ok ? (live.value?.scheduled ?? null) : null);
 
-  const summary = subscriptionSummary(plan, effectiveRenewsAt, effectiveAmount, scheduled, formatDate);
+  const summary = subscriptionSummary(plan, effectiveRenewsAt, effectiveAmount, effectiveScheduled, formatDate);
 
   return (
     <Shell email={user.email} current="billing">
@@ -135,7 +154,7 @@ export default async function BillingPage() {
          * ladder on `/` cannot. Hidden once a cancellation is already scheduled — Resume there
          * is what calls it off — and for Free, which has nothing to cancel.
          */}
-        {plan !== "free" && scheduled?.kind !== "ends" && (
+        {plan !== "free" && effectiveScheduled?.kind !== "ends" && (
           <form action="/api/cancel" method="post" className="mt-11">
             <Button type="submit" variant="outline" size="sm">
               Cancel subscription
