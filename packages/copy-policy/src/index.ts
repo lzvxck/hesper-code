@@ -22,7 +22,12 @@ export const OVERCLAIMS = [
   /superintelligen/i,
 ];
 
-export const FUTURITY = [/roadmap/i, /coming soon/i, /stage \d/i, /planned/i, /in the future/i];
+/*
+ * `\bsoon\b` rather than `coming soon`, which it subsumes: "landing soon" and "soon you will
+ * be able to" are the same promise and neither was caught. Deliberately NOT `will be` — the
+ * portal legitimately says "Nothing more will be charged."
+ */
+export const FUTURITY = [/roadmap/i, /\bsoon\b/i, /stage \d/i, /planned/i, /in the future/i];
 
 /* Real, but not in the released binary — claiming any of it makes the page falsifiable. */
 export const UNSHIPPED = [
