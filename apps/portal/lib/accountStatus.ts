@@ -42,8 +42,11 @@ export async function readAccountStatus(
       .select("plan, subscription_status")
       .eq("workos_user_id", workosUserId)
       .maybeSingle();
-    // postgrest-js reports a network failure as a plain {message, details, hint, code} object
-    // rather than an Error, so the code is read off the shape — never off an instanceof.
+    // PGRST303 is a PostgREST error *response*, and postgrest-js surfaces its body as a plain
+    // {message, details, hint, code} object on `error` rather than as an Error — so the code is
+    // read off the shape, never off an instanceof. A genuine network failure is a different
+    // thing entirely: it arrives with no PostgREST code at all and so falls straight through to
+    // the throw, which is correct — there is no clock skew to wait out.
     if (error) {
       if ((error as { code?: unknown })?.code !== "PGRST303" || attempt >= RETRY_DELAYS_MS.length) throw error;
       await wait(RETRY_DELAYS_MS[attempt]);
