@@ -14,13 +14,8 @@ const UPDATED_PARAM = "updated";
 
 export const ACCOUNT_UPDATED = `/?${UPDATED_PARAM}=1`;
 
-/*
- * The two signed-in pages the account chrome links between. Unlike UPDATED_PARAM these are not
- * a protocol: app/page.tsx and app/usage/page.tsx are filesystem routes with no string to
- * rename, and Shell.tsx is the only consumer of either. They pin the spelling in one file and
- * nothing more — renaming the usage directory leaves these constants, and the assertion in
- * tests/routes.test.ts, agreeing with themselves while the button 404s.
- */
+// The two signed-in pages the account chrome links between; tests/routes.test.ts checks USAGE
+// still resolves to a page on disk.
 export const PLANS = "/";
 export const USAGE = "/usage";
 

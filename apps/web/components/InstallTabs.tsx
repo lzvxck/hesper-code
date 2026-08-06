@@ -11,8 +11,11 @@ const INSTALL_SH = "curl -fsSL https://seri-agent.seriora.ai/install.sh | bash";
  * macOS and Linux run the identical script — it detects OS and CPU architecture and
  * pulls the matching binary. They're still split into two tabs because that's the
  * convention users scan for.
+ *
+ * Exported for tests/copy.test.ts: Radix renders no closed TabsContent, so two of these
+ * three commands and notes appear in no rendered markup the copy policy could scan.
  */
-const PLATFORMS = [
+export const PLATFORMS = [
   {
     id: "macos",
     label: "macOS",

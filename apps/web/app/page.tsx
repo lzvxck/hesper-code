@@ -1,7 +1,7 @@
 import { ArrowRight, History, Key, Layers, ListChecks, Network, Route } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Button, GitHubMark, Reveal, SiteFooter, SiteNav } from "@seri/ui";
+import { Button, GitHubMark, Reveal, SiteFooter, SiteNav, rowDelay } from "@seri/ui";
 
 import { InstallTabs } from "@/components/InstallTabs";
 import { LearningLoop } from "@/components/LearningLoop";
@@ -177,7 +177,7 @@ export default function Home() {
                 <Reveal
                   key={hedge.title}
                   as="li"
-                  delay={(index % 2) * 100}
+                  delay={rowDelay(index, 2)}
                   className="flex h-full flex-col rounded-md border border-on-ink-hairline p-16 md:p-22"
                 >
                   <h3 className="text-[16px] leading-[1.3] font-bold tracking-[-0.3px]">
@@ -203,7 +203,7 @@ export default function Home() {
               <Reveal
                 key={feature.title}
                 as="li"
-                delay={(index % 3) * 100}
+                delay={rowDelay(index, 3)}
                 className="flex h-full flex-col rounded-md border border-ink-hairline bg-canvas p-16 shadow-card md:p-22"
               >
                 <feature.icon size={20} strokeWidth={1.5} aria-hidden="true" />
@@ -233,7 +233,7 @@ export default function Home() {
                 <Reveal
                   key={mode.name}
                   as="li"
-                  delay={index * 100}
+                  delay={rowDelay(index, 3)}
                   className="flex h-full flex-col rounded-md border border-on-ink-hairline p-16 md:p-22"
                 >
                   <div className="flex items-center gap-6">
@@ -264,7 +264,9 @@ export default function Home() {
             </Reveal>
 
             {/* Stacked rather than a 3-up grid: at a third of the container these commands
-                truncate, and sequential steps read better down the page than across it. */}
+                truncate, and sequential steps read better down the page than across it.
+                That is also why this one keeps `index * 100` and does not use rowDelay: there
+                is no row to reset at, and rowDelay(index, 1) is 0 for every step. */}
             <ol className="mt-29 flex flex-col gap-16 md:mt-34">
               {[
                 {

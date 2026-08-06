@@ -3,27 +3,31 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
-import {
-  FUTURITY,
-  OVERCLAIMS,
-  UNSHIPPED,
-  found,
-  visibleText,
-} from "../../../packages/copy-policy/claims";
+import { assertClean, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
+import { PLATFORMS } from "../components/InstallTabs";
+
+// Why the page is rendered rather than read as source, and what rendering does not cover, are
+// both on assertClean.
+const RENDERED = textNodes(renderToStaticMarkup(createElement(Home)));
 
 /*
- * The page is rendered, not read as source. Reading page.tsx as text scanned its code comments
- * as if they were copy, in both directions: a comment holding the pinned phrases kept this suite
- * green while the gate card was deleted from the JSX outright, and a comment that merely
- * mentioned an OS sandbox turned it red while nothing on the page said so.
+ * The install tabs are the one region of this page rendering cannot reach. InstallTabs is a
+ * Radix Tabs with defaultValue="macos", and Radix does not render the children of a closed
+ * TabsContent — measured on the real render: three role="tabpanel" elements, and 27,921 chars
+ * of markup holding neither "install.ps1" nor either of the two non-default notes. So the
+ * Windows command and the Linux and Windows notes shipped as user-visible copy no pattern was
+ * ever tested against. ("PowerShell" is in that markup, from the Supported platforms prose
+ * further down the page — which is why the absent strings, not that word, are the evidence.)
  *
- * Rendering is cheap because this is a server component with no data of its own, and it asserts
- * what actually ships. renderToStaticMarkup produces the initial state and runs no effects,
- * which is what we want — Reveal's animation is not copy.
+ * Reading the array is the fix rather than rendering with forceMount, which would mount all
+ * three panels in every visitor's DOM to suit a test. The array is already a module-level
+ * const and the strings in it are the copy; nothing about the shipped page changes.
  */
-const COPY = visibleText(renderToStaticMarkup(createElement(Home)));
+const TABS = PLATFORMS.map((platform) => `${platform.command} ${platform.note}`).join(" ");
+
+const COPY = `${RENDERED} ${TABS}`;
 
 /*
  * The <title> and <meta description> make the same claims and travel furthest from the site.
@@ -33,16 +37,8 @@ const COPY = visibleText(renderToStaticMarkup(createElement(Home)));
 const META = `${metadata.title} ${metadata.description}`;
 
 describe("apps/web copy", () => {
-  test("makes no claim a reader cannot check", () => {
-    expect(found(`${COPY} ${META}`, OVERCLAIMS)).toEqual([]);
-  });
-
-  test("promises nothing for later", () => {
-    expect(found(`${COPY} ${META}`, FUTURITY)).toEqual([]);
-  });
-
-  test("claims nothing this release does not ship", () => {
-    expect(found(`${COPY} ${META}`, UNSHIPPED)).toEqual([]);
+  test("says nothing the copy policy forbids", () => {
+    assertClean(`${COPY} ${META}`);
   });
 
   // D7: the gate and the bound are what make the learning claim checkable, so both are pinned.
