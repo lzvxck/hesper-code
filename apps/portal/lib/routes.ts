@@ -29,10 +29,11 @@ export function isFreshLoad(params: Record<string, string | string[] | undefined
 }
 
 /*
- * Nothing strips the marker: a refresh keeps it, every mutation redirects back to it, the
- * customer portal returns to it, and the wordmark is an in-page anchor — so no link on the
- * page reaches a markerless `/`. That is fine while the answer is a plan, and a trap when it
- * is not.
+ * Nothing on this page strips the marker: a refresh keeps it, every mutation redirects back to
+ * it, the customer portal returns to it, and the wordmark is an in-page anchor. The one route
+ * to a markerless `/` is the detour out to /usage and back through "Back to plans" — two
+ * clicks, on a page a customer stuck here has no reason to open. So treat the marker as
+ * sticky: fine while the answer is a plan, a trap when it is not.
  *
  * A fresh load resolving to no plan is the ambiguous moment: either Polar has not published a
  * just-completed checkout yet, or the customer abandoned one after their Free subscription had

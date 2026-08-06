@@ -117,7 +117,7 @@ export default function Home() {
               <Reveal
                 key={product.name}
                 as="li"
-                delay={index * 100}
+                delay={(index % 2) * 100}
                 className="flex h-full flex-col rounded-md border border-ink-hairline bg-canvas p-16 shadow-card md:p-22"
               >
                 <code className="font-mono text-mono font-bold">{product.name}</code>
