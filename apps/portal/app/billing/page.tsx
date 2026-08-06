@@ -36,7 +36,7 @@ type Attempt<T> = { ok: true; value: T } | { ok: false };
  * error boundary.
  *
  * `ok: false` is deliberately distinct from a value of `null`: `getPaymentMethod` resolving to
- * `null` means Polar was asked and answered "no default method", which is a real empty state.
+ * `null` means Polar was asked and had no card to name, which is a real empty state.
  * Collapsing the two would show "unavailable" copy for a card that simply is not on file, or
  * "none on file" copy while the account's actual card is unknown.
  */

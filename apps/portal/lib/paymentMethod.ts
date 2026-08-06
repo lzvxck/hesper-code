@@ -38,7 +38,16 @@ export async function getPaymentMethod(
   if (!response.ok) throw new Error(`Polar payment-methods request failed with status ${response.status}`);
 
   const { items } = (await response.json()) as PolarPaymentMethodsResponse;
-  const metadata = items.find((item) => item.is_default)?.method_metadata;
+  /*
+   * The default if one is flagged, otherwise the sole card. Polar documents no rule for when a
+   * checkout-attached card gets `is_default: true`, and measured against sandbox it does not:
+   * the embed's own `setAsDefault` defaults to true, so only cards added through UpdateCard are
+   * flagged, and every customer who arrived by checkout had a real card read back as "none on
+   * file". With several cards and no flag this still returns null — there is nothing to name,
+   * and answering with items[0] would be an invented choice rather than a read.
+   */
+  const single = items.length === 1 ? items[0] : undefined;
+  const metadata = (items.find((item) => item.is_default) ?? single)?.method_metadata;
   if (!metadata) return null;
 
   return { brand: metadata.brand, last4: metadata.last4, expMonth: metadata.exp_month, expYear: metadata.exp_year };
