@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
 
-import { Button, Reveal, SiteFooter, SiteNav } from "@seri/ui";
+import { Button, Reveal, SiteFooter, SiteNav, rowDelay } from "@seri/ui";
 
 const REPO_URL = "https://github.com/lzvxck/seri-agent";
 const AGENT_URL = "https://seri-agent.seriora.ai";
@@ -117,7 +117,7 @@ export default function Home() {
               <Reveal
                 key={product.name}
                 as="li"
-                delay={(index % 2) * 100}
+                delay={rowDelay(index, 2)}
                 className="flex h-full flex-col rounded-md border border-ink-hairline bg-canvas p-16 shadow-card md:p-22"
               >
                 <code className="font-mono text-mono font-bold">{product.name}</code>
@@ -152,7 +152,7 @@ export default function Home() {
               <Reveal
                 key={problem.title}
                 as="li"
-                delay={(index % 2) * 100}
+                delay={rowDelay(index, 2)}
                 className="flex h-full flex-col rounded-md border border-ink-hairline p-16 md:p-22"
               >
                 <h3 className="text-[16px] leading-[1.3] font-bold tracking-[-0.3px]">
@@ -178,7 +178,7 @@ export default function Home() {
                 <Reveal
                   key={principle.title}
                   as="li"
-                  delay={index * 100}
+                  delay={rowDelay(index, 3)}
                   className="flex h-full flex-col rounded-md border border-on-ink-hairline p-16 md:p-22"
                 >
                   <h3 className="text-[16px] leading-[1.3] font-bold tracking-[-0.3px]">{principle.title}</h3>
