@@ -21,7 +21,7 @@ export function subscriptionSummary(
   if (plan === null) {
     return {
       title: "Plan not recognized",
-      state: "You're on a plan we no longer offer. Invoices and payment method are below.",
+      state: "You're on a plan we no longer offer. Invoices, payment method and cancellation are below.",
       allowanceLine: "",
     };
   }

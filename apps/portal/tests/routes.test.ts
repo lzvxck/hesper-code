@@ -2,8 +2,9 @@ import { existsSync } from "node:fs";
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Polar } from "@polar-sh/sdk";
-import { changePlan, createCheckout, resumePaidPlan } from "../lib/billing";
-import { USAGE } from "../lib/routes";
+import { renderToStaticMarkup } from "react-dom/server";
+import { cancelPaidPlan, changePlan, createCheckout, resumePaidPlan } from "../lib/billing";
+import { BILLING, USAGE } from "../lib/routes";
 import type { ActiveSubscription } from "../lib/subscriptions";
 
 const PRODUCTS = {
@@ -31,10 +32,17 @@ function sub(id: string, productId: string, overrides: Partial<ActiveSubscriptio
   };
 }
 
+// A paid order shaped closely enough to render through invoiceRows, for the /billing tests
+// that reach the page's own markup rather than only checking which calls Polar received.
+function order(id: string): { id: string; createdAt: Date; status: string; totalAmount: number } {
+  return { id, createdAt: PERIOD_END, status: "paid", totalAmount: 2000 };
+}
+
 function fakePolar(
   activeSubscriptions: ActiveSubscription[],
   updateError?: unknown,
   calls: { method: string; args: unknown }[] = [],
+  orders: { id: string }[] = [],
 ) {
   const client = {
     checkouts: {
@@ -50,6 +58,10 @@ function fakePolar(
       },
     },
     subscriptions: {
+      get: (args: unknown) => {
+        calls.push({ method: "subscriptions.get", args });
+        return Promise.resolve({ id: (args as { id: string }).id, pendingUpdate: null });
+      },
       update: (args: unknown) => {
         calls.push({ method: "subscriptions.update", args });
         return updateError ? Promise.reject(updateError) : Promise.resolve({ id: "sub_session" });
@@ -57,6 +69,30 @@ function fakePolar(
       revoke: (args: unknown) => {
         calls.push({ method: "subscriptions.revoke", args });
         return Promise.resolve({ id: "sub_free" });
+      },
+    },
+    orders: {
+      list: (args: unknown) => {
+        calls.push({ method: "orders.list", args });
+        return Promise.resolve({
+          [Symbol.asyncIterator]: async function* () {
+            yield { result: { items: orders } };
+          },
+        });
+      },
+      generateInvoice: (args: unknown) => {
+        calls.push({ method: "orders.generateInvoice", args });
+        return Promise.resolve(undefined);
+      },
+      invoice: (args: unknown) => {
+        calls.push({ method: "orders.invoice", args });
+        return Promise.resolve({ url: "https://sandbox.polar.sh/invoice.pdf" });
+      },
+    },
+    customerSessions: {
+      create: (args: unknown) => {
+        calls.push({ method: "customerSessions.create", args });
+        return Promise.resolve({ token: "polar_cst_test", expiresAt: new Date("2026-09-01T00:00:00Z") });
       },
     },
   };
@@ -71,6 +107,10 @@ const deps = (polar: Polar) => ({ polar, products: PRODUCTS, userId: SESSION_USE
 // this used to do — restates the export and cannot fail.
 test("USAGE names a page that is actually on disk", () => {
   expect(existsSync(`${import.meta.dir}/../app${USAGE}/page.tsx`)).toBe(true);
+});
+
+test("BILLING names a page that is actually on disk", () => {
+  expect(existsSync(`${import.meta.dir}/../app${BILLING}/page.tsx`)).toBe(true);
 });
 
 describe("createCheckout", () => {
@@ -458,6 +498,69 @@ describe("resumePaidPlan", () => {
 });
 
 /*
+ * The remedy for "Plan not recognized": an active subscription on a product this deployment
+ * cannot map to a plan. changePlan's target === "free" branch and resumePaidPlan both go
+ * through sessionPaidSubscription, which requires exactly the mapping this account does not
+ * have — the tests below are what confirms cancelPaidPlan does not share that limitation.
+ */
+describe("cancelPaidPlan", () => {
+  test("ends a recognized paid subscription at the period end", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_paid", "prod_pro")]);
+
+    const response = await cancelPaidPlan(deps(polar));
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/?updated=1");
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_paid", subscriptionUpdate: { cancelAtPeriodEnd: true } },
+    });
+  });
+
+  // The case sessionPaidSubscription cannot reach: an active subscription on a product this
+  // deployment has no POLAR_PRODUCT_* variable for.
+  test("ends a subscription on a product this deployment cannot map to a plan", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_unmapped", "prod_from_another_environment")]);
+
+    const response = await cancelPaidPlan(deps(polar));
+
+    expect(response.status).toBe(303);
+    expect(calls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_unmapped", subscriptionUpdate: { cancelAtPeriodEnd: true } },
+    });
+  });
+
+  test("returns 409 when only the free subscription is active, since there is nothing to cancel", async () => {
+    const { client: polar, calls } = fakePolar([sub("sub_free", "prod_free")]);
+
+    const response = await cancelPaidPlan(deps(polar));
+
+    expect(response.status).toBe(409);
+    expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
+  });
+
+  test("returns 409 when the session has no active subscription at all", async () => {
+    const { client: polar, calls } = fakePolar([]);
+
+    expect((await cancelPaidPlan(deps(polar))).status).toBe(409);
+    expect(calls.some((call) => call.method === "subscriptions.update")).toBe(false);
+  });
+
+  // The same race resumePaidPlan already answers this way: the read and the write are not
+  // atomic, and Polar can have ended the subscription in between.
+  test("answers 409 rather than a 500 when Polar says the subscription already ended", async () => {
+    const alreadyEnded = Object.assign(new Error("AlreadyCanceledSubscription"), { statusCode: 403 });
+    const { client: polar } = fakePolar([sub("sub_paid", "prod_pro")], alreadyEnded);
+
+    const response = await cancelPaidPlan(deps(polar));
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).not.toContain("Manage billing");
+  });
+});
+
+/*
  * The real route handlers, not a substring search over their source. Supabase Auth is
  * unused here, so there is no auth.uid() and no RLS policy underneath: if a route ever took
  * the account from the request, nothing else in the system would notice.
@@ -478,9 +581,20 @@ describe("route handlers", () => {
   const polarCalls: { method: string; args: unknown }[] = [];
   // What the fake reports for the session's customer; a test sets it before driving a route.
   let sessionSubscriptions: ActiveSubscription[] = [];
+  // The session's own orders, for /api/invoice and /billing.
+  let sessionOrders: ReturnType<typeof order>[] = [];
+  // account_status for the session; /billing's ensureProvisioned and its own past-due read
+  // both go through this same row.
+  let accountStatusRow: { plan: string; subscription_status: string } | null = {
+    plan: "pro",
+    subscription_status: "active",
+  };
   let checkoutRoute: typeof import("../app/api/checkout/route");
   let planRoute: typeof import("../app/api/plan/route");
   let resumeRoute: typeof import("../app/api/resume/route");
+  let cancelRoute: typeof import("../app/api/cancel/route");
+  let invoiceRoute: typeof import("../app/api/invoice/route");
+  let billingPage: typeof import("../app/billing/page");
   const originalProducts = { ...PRODUCTS };
 
   // A request that names somebody else's account in every place one could be smuggled.
@@ -505,6 +619,17 @@ describe("route handlers", () => {
     });
   }
 
+  // /api/invoice takes a GET, so there is no form body — the victim id goes in the query
+  // string instead, alongside the real order id, plus the same two identity headers.
+  function hostileInvoiceRequest(orderId: string): Request {
+    return new Request(
+      `${ORIGIN}/api/invoice?orderId=${orderId}&userId=${VICTIM_USER_ID}&externalCustomerId=${VICTIM_USER_ID}`,
+      {
+        headers: { "x-account-id": VICTIM_USER_ID, "x-workos-user-id": VICTIM_USER_ID },
+      },
+    );
+  }
+
   beforeAll(async () => {
     for (const [name, value] of Object.entries(originalProducts)) process.env[name] = value;
     process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI = `${ORIGIN}/callback`;
@@ -512,21 +637,37 @@ describe("route handlers", () => {
     /*
      * NOTE: mock.module registers process-wide and afterAll does not undo it. The bare
      * `bun test` CI runs puts every file in one process, so a future test file importing
-     * ../lib/session or ../lib/polar will get these stubs depending on file order. Only
-     * getPolarClient is replaced on ../lib/polar — everything else is the real export.
+     * ../lib/session, ../lib/polar, ../lib/supabase or @/lib/actions will get these stubs
+     * depending on file order. Only getPolarClient is replaced on ../lib/polar — everything
+     * else is the real export.
      */
     mock.module("server-only", () => ({}));
+    mock.module("@/lib/actions", () => ({ endSession: async () => {} }));
     mock.module("../lib/session", () => ({
       getSessionUser: async () => ({ userId: SESSION_USER_ID, email: "someone@seriora.ai" }),
     }));
     mock.module("../lib/polar", () => ({
       ...require("../lib/polar"),
-      getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls).client,
+      getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
+    }));
+    // Only account_status is read on /billing's paths under test — the same row backs both
+    // ensureProvisioned's fast path and the page's own past-due check.
+    mock.module("../lib/supabase", () => ({
+      getSupabaseClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({ maybeSingle: () => Promise.resolve({ data: accountStatusRow, error: null }) }),
+          }),
+        }),
+      }),
     }));
 
     checkoutRoute = await import("../app/api/checkout/route");
     planRoute = await import("../app/api/plan/route");
     resumeRoute = await import("../app/api/resume/route");
+    cancelRoute = await import("../app/api/cancel/route");
+    invoiceRoute = await import("../app/api/invoice/route");
+    billingPage = await import("../app/billing/page");
   });
 
   afterAll(() => {
@@ -537,6 +678,8 @@ describe("route handlers", () => {
 
   beforeEach(() => {
     polarCalls.length = 0;
+    sessionOrders = [];
+    accountStatusRow = { plan: "pro", subscription_status: "active" };
   });
 
   /*
@@ -644,6 +787,29 @@ describe("route handlers", () => {
     expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
   });
 
+  /*
+   * /api/cancel reads no body at all either, for the same reason: the only account it can
+   * possibly act on is the session's own. Covers the product-mapping gap directly — the
+   * session holds a subscription on a product with no POLAR_PRODUCT_* variable, which is
+   * exactly what sessionPaidSubscription (and so /api/plan, /api/checkout) cannot find.
+   */
+  test("POST /api/cancel cancels the session's subscription, ignoring the request entirely", async () => {
+    sessionSubscriptions = [sub("sub_session", "prod_from_another_environment")];
+
+    const response = await cancelRoute.POST();
+
+    expect(response.status).toBe(303);
+    expect(polarCalls).toContainEqual({
+      method: "customers.getStateExternal",
+      args: { externalId: SESSION_USER_ID },
+    });
+    expect(polarCalls).toContainEqual({
+      method: "subscriptions.update",
+      args: { id: "sub_session", subscriptionUpdate: { cancelAtPeriodEnd: true } },
+    });
+    expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+  });
+
   // A poisoned Host header would otherwise decide where Polar sends a paying customer next.
   test("takes the return origin from configuration, not from the request's host", async () => {
     sessionSubscriptions = [sub("sub_free", "prod_free")];
@@ -659,6 +825,95 @@ describe("route handlers", () => {
     expect(polarCalls).toContainEqual({
       method: "checkouts.create",
       args: { products: ["prod_pro"], externalCustomerId: SESSION_USER_ID, successUrl: `${ORIGIN}/?updated=1` },
+    });
+  });
+
+  /*
+   * Polar's generateInvoice and invoice calls take only the order id, with no customer id to
+   * check it against, so ownership has to be enforced in the route itself against the
+   * session's own order list — this is the IDOR the two tests below cover.
+   */
+  describe("GET /api/invoice", () => {
+    test("downloads an order the session's own history actually contains", async () => {
+      sessionOrders = [order("order_owned")];
+
+      const response = await invoiceRoute.GET(hostileInvoiceRequest("order_owned"));
+
+      expect(response.status).toBe(303);
+      expect(response.headers.get("Location")).toBe("https://sandbox.polar.sh/invoice.pdf");
+      expect(polarCalls).toContainEqual({
+        method: "orders.list",
+        args: { externalCustomerId: SESSION_USER_ID },
+      });
+      expect(polarCalls.some((call) => call.method === "orders.generateInvoice")).toBe(true);
+      expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+    });
+
+    test("refuses an order id the session's own history does not contain", async () => {
+      sessionOrders = [order("order_owned")];
+
+      const response = await invoiceRoute.GET(hostileInvoiceRequest("order_victim"));
+
+      expect(response.status).toBe(404);
+      expect(polarCalls.some((call) => call.method === "orders.generateInvoice")).toBe(false);
+      expect(polarCalls.some((call) => call.method === "orders.invoice")).toBe(false);
+      expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
+    });
+
+    test("missing an order id is a 400, not a lookup", async () => {
+      const response = await invoiceRoute.GET(new Request(`${ORIGIN}/api/invoice`));
+
+      expect(response.status).toBe(400);
+      expect(polarCalls).toEqual([]);
+    });
+  });
+
+  /*
+   * The page takes no request-derived input at all — no searchParams, no body — so unlike
+   * the routes above there is no id for a hostile caller to smuggle in. Every Polar call it
+   * makes is keyed on the session's own externalId by construction, the same guarantee
+   * /api/resume has. What is worth covering here is what routes.test.ts cannot express
+   * elsewhere: the past-due banner's one conditional branch, and that a Polar failure
+   * degrades its own section instead of throwing through the page.
+   */
+  describe("GET /billing", () => {
+    test("shows the past-due banner only when account_status says past_due", async () => {
+      accountStatusRow = { plan: "pro", subscription_status: "past_due" };
+      sessionSubscriptions = [sub("sub_session", "prod_pro")];
+
+      const pastDueHtml = renderToStaticMarkup(await billingPage.default());
+      expect(pastDueHtml).toContain("Payment past due");
+
+      accountStatusRow = { plan: "pro", subscription_status: "active" };
+      const activeHtml = renderToStaticMarkup(await billingPage.default());
+      expect(activeHtml).not.toContain("Payment past due");
+    });
+
+    test("degrades the invoice section to a line of text rather than a 500 when Polar fails", async () => {
+      sessionSubscriptions = [sub("sub_session", "prod_pro")];
+      const { client: throwingPolar } = fakePolar(sessionSubscriptions, undefined, polarCalls);
+      throwingPolar.orders.list = () => Promise.reject(Object.assign(new Error("rate limited"), { statusCode: 429 }));
+      mock.module("../lib/polar", () => ({ ...require("../lib/polar"), getPolarClient: () => throwingPolar }));
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("Invoice history unavailable right now.");
+      expect(html).not.toContain("No invoices yet.");
+
+      // Restore the ordinary fake for every test after this one.
+      mock.module("../lib/polar", () => ({
+        ...require("../lib/polar"),
+        getPolarClient: () => fakePolar(sessionSubscriptions, undefined, polarCalls, sessionOrders).client,
+      }));
+    });
+
+    test("never sends any id but the session's own to Polar", async () => {
+      sessionSubscriptions = [sub("sub_session", "prod_pro")];
+      sessionOrders = [order("order_owned")];
+
+      await billingPage.default();
+
+      expect(JSON.stringify(polarCalls)).not.toContain(VICTIM_USER_ID);
     });
   });
 });
