@@ -1,0 +1,412 @@
+# Build Plan
+
+Implementation sequence for the harness specified in `ARCHITECTURE.md`.
+Product name **Seri**, by Seriora Research; ships as the binary `seri`. (Brand and command differ
+the way Claude Code ships as `claude`.) Renamed from Hesper Code on 2026-08-04.
+
+## Settled inputs
+
+| Decision | Value | Source |
+|---|---|---|
+| Language | TypeScript, `bun build --compile` → single binary per platform | Part IV |
+| Provider layer | Vercel AI SDK; OpenRouter breadth tier + native Anthropic/OpenAI depth | Part IV |
+| Safety layering | Gate-first; OS sandbox is an upgrade tier, not the base | Part IV |
+| Platforms | Windows, macOS, Linux — natively, no WSL2/Docker prerequisite | Constraint #2 |
+| Shell | Two tools (`bash`, `powershell`), no translation between them | Part IV |
+| Instruction file | AGENTS.md, nearest-in-tree wins; global file behind it | Layer 7 / Part II §8 |
+| Product scope | **Code-first, not code-only** — v0.1.0 ships as a coding agent; assistant work is a post-release arc | Constraint #3 |
+
+## Scope: what "code-first, not code-only" changes in this plan
+
+Added 2026-08-04 with constraint #3. It is a constraint on assumptions, and the honest summary is
+that it changes **less than it sounds like** — three facts about this plan are unmoved by it:
+
+1. **Layer 1 is a coding toolset** — read / write / edit / grep / glob / shell. Assistant-grade
+   capability arrives through MCP, which is Stage 10, post-release.
+2. **The release gate is a TUI** (Stage 11). An assistant that lives only in a terminal is a coding
+   agent with extra steps; multi-surface is the daemon, Stage 8, post-release.
+3. **Therefore v0.1.0 ships as a coding agent regardless.** The assistant arc *starts* at Stage 8.
+
+So nothing before Stage 11 gets rescoped. What the constraint does buy, right now, is the right to
+stop rejecting mechanisms for being assistant-shaped — and two concrete items that are cheap only
+while the code is small: **profiles** (Stage B) and the **global instruction file** (decided here,
+built with 6b). Both are path-and-prompt architecture, the same category of "cheap now, refactor
+later" as the client/server boundary and the prompt tiers.
+
+The public positioning does not move with the constraint: `README.md` and `AGENTS.md` say
+"coding-agent CLI" and keep saying it until the surfaces exist. This is a design-doc decision, not
+a marketing one.
+
+## Sequencing principle
+
+**Walking skeleton, then thicken.** Not Layer 0 → 8 in order — that yields nothing runnable until
+the end. Within that, **risk-first**: the edit pipeline is the most implementation-critical axis in
+`RESEARCH.md` *and* fully testable without a model, so it gets built early where verification is
+nearly free.
+
+One rule that holds from the first commit: **the loop is a library, not a CLI.** No direct stdout,
+no process globals — it emits events and a thin CLI consumes them. `RESEARCH.md` warns that
+retrofitting the client/server boundary is a rewrite. The *transport* (daemon, Stage 8) is deferred;
+the *boundary* is not.
+
+---
+
+# Status and execution order — updated 2026-08-04
+
+**Stage numbers are identities, not an order.** They are referenced from outside this file (e.g.
+`.claude/loops/hosted-accounts-billing-gateway/PHASE-A-HANDOFF.md` gates Phase B on "Stage 7"), so
+they do not get renumbered. The order below is what changed.
+
+| Stage | State |
+|---|---|
+| 0 Foundation | **done** |
+| 1 Tools | **done** |
+| 2 Loop, provider, gate | **done** — provider is Groq, not the Anthropic-direct the plan assumed |
+| 3 Compaction | **done** |
+| 4 Checkpoints | **done** — PR #17, CI green on all three OSes. **v1 is complete.** |
+
+**The release moved, and that reorders everything after Stage 7.** The decision (2026-08-04): no
+release until the TUI is good, because it has to *look* right. That makes Stage 11 a release
+**gate** rather than the tail of the plan — and under the original ordering it would hold the
+release hostage to the daemon, the OS sandbox and MCP, none of which have anything to do with how
+seri looks.
+
+The plan already anticipated this: Stage 11 says the TUI is *incremental* on Stage 2's streaming
+stdout — that is the payoff of choosing inline rendering over a full-screen alternate buffer — and
+that it "can be pulled earlier than Stage 11 if the ergonomics start to hurt". It is not that they
+hurt; it is that the TUI is now on the critical path.
+
+**New order:**
+
+1. **Abort/cancellation** — not a numbered stage; see Stage A below. Next.
+2. **Prompt tiers** — not a numbered stage; see Stage B below. Small, and it goes before Stage 5
+   because everything after Stage 5 assembles prompts.
+3. **Stage 5** — verification loop (LSP diagnostics, edit-failure reflection).
+4. **Stage 6** — subagents, now including the `curator` learning pass.
+5. **Stage 7** — routing and provider breadth. Also unblocks billing Phase B.
+6. **Stage 11** — TUI and distribution. **Release gate: v0.1.0 ships here.**
+7. **Stages 8, 9, 10** — daemon, OS sandbox, extensibility. Post-release; each adds capability to a
+   product that already exists, rather than being a condition for it existing.
+
+**Nothing from the Hermes survey gets its own stage, and nothing displaces the release gate** (added
+2026-08-04, after surveying Hermes Agent — see `ARCHITECTURE.md` Part I). It distributes into
+slots that already exist:
+
+| Piece | Lands at | Relative to release |
+|---|---|---|
+| Prompt tiers | **Stage B** | before — prompt architecture, not a feature |
+| Memory store + `curator` role | **Stage 6b** | before — same machinery as Stage 6, marginal cost |
+| Curator on a cheap model | **Stage 7** | before — one more row in the routing table |
+| FTS5 cross-session search | **Stage 8** | after — needs the daemon's SQLite |
+| Agent-authored recipes | **Stage 10** | after — needs the recipe format to exist |
+
+The split is not arbitrary. The pieces landing before the release are the ones that are nearly free
+*given work already scheduled*; the ones landing after are the ones that would need infrastructure
+built early just to serve them. Note the honest limit on the early half: memory compounds with use
+and there are no users until Stage 11, so the curator ships **working but empty**. Its value is
+zero on release day and accrues afterward. That is an acceptable trade only because the cost is
+marginal — if 6b starts growing into its own stage, it belongs after the release, not before it.
+
+## Stage A — abort and cancellation (unnumbered, comes before Stage 5)
+
+Ctrl-C during a model turn kills the process instead of cancelling the turn. `streamText`
+(`loop.ts`) gets no `abortSignal`, and `runRipgrep` is synchronous, so an in-flight search cannot
+be interrupted either. Claude Code passes an `AbortSignal` plus a timeout to its own rg spawn.
+
+Sequenced here rather than later for three reasons, none of them user-facing urgency (there are no
+users until the release):
+- **Stage 6 needs it.** opencode's `task` tool hangs its cancellation off `ctx.abort`; without a
+  signal reaching the loop, an in-flight subagent cannot be cut.
+- **Stage 5 needs it.** An LSP round-trip after every edit is exactly the kind of thing that must
+  be abortable when it hangs.
+- **Retrofit cost grows.** ~21 call sites across 8 files today; both stages above add more.
+
+A flat `AbortController` per turn is the foundation of the hierarchical version Stage 6 will want —
+deriving a child signal from a parent is trivial — so building it now locks nothing out.
+
+**Verify:** Ctrl-C during a turn cancels the turn and leaves the session resumable; a second Ctrl-C
+exits. An in-flight `grep` is interrupted rather than run to completion. The partial assistant
+message is handled deliberately (kept or discarded — decided, not defaulted).
+
+## Stage B — prompt tiers and the profile root (unnumbered, comes before Stage 5)
+
+Two unrelated changes share a stage because both are "restructure now, fill in later," both are
+small, and both get expensive at the same moment — Stage 6b, which adds four new paths and a second
+prompt assembler.
+
+### B1 — the profile root *[Hermes #14]*
+
+Every path resolves from a **profile root** instead of a fixed home: `~/.seri/<profile>/` (Unix),
+`%LOCALAPPDATA%\seri\<profile>\` (Windows), selected by env var or flag, defaulting to `default`.
+Config, sessions, checkpoints — and later memories and pending — all hang off it.
+
+That is the whole change: one indirection in `config/paths.ts`, which is still three files. It is
+sequenced here for a reason that expires — 6b adds `memories/` and `pending/`, Stage 8 adds the
+session database, and each one written against a fixed home is another retrofit. Nothing else in
+this stage depends on it and no feature ships from it; profiles become *user-visible* whenever
+there is a reason, which under constraint #3 is when one machine runs a work agent and a personal
+agent that should not share memory.
+
+**Verify:** every existing path resolves identically under the default profile — this is a
+refactor with no behavioral delta. A non-default profile gets a fully disjoint tree; no test
+asserts a hardcoded `~/.seri/` path afterward.
+
+### B2 — prompt tiers
+
+The system prompt is one flat frozen string on the session (`session.systemPrompt`, built once and
+passed to `runLoop`). Split it into the three ordered tiers Hermes uses *[Hermes #2]*:
+
+| Tier | Contents | Changes |
+|---|---|---|
+| **stable** | identity, tool guidance, ripgrep preference | never within a session |
+| **context** | AGENTS.md, recipe metadata | at session start |
+| **volatile** | memory, timestamps | last position, so a change invalidates the least prefix |
+
+That is the whole change. **No memory is built here** — the tier exists and is empty. It is
+sequenced before Stage 5 for the same reason the client/server *boundary* was sequenced at Stage 0
+while the transport was deferred to Stage 8: it costs ~30 lines now, and after Stage 7 there are
+four prompt assemblers (main loop, architect, editor, oracle) instead of one. Prefix caching is the
+payoff and it is provider-visible — the ordering is what lets memory land later without
+invalidating the cache on every session.
+
+Two decisions to record while touching this, neither of them built here
+(`ARCHITECTURE.md` Part II §8):
+
+- **AGENTS.md is a human contract the agent never writes.** Memory is learned scratch, stored
+  outside the repo, written only by the curator through the gate.
+- **A global instruction file sits behind AGENTS.md**, machine-local, per profile, for work outside
+  any repository. It loads into the *context* tier, below AGENTS.md when both exist. Under
+  constraint #3 this is the file that keeps seri coherent when there is no repo at all — invisible
+  today, load-bearing the moment Stage 8 lands.
+
+**Verify:** the assembled prompt is byte-identical to today's for a session with no memory —
+this stage changes structure, not output. Tier order is asserted in a test, because the ordering is
+the entire point and a later refactor could reorder it without any visible symptom.
+
+---
+
+# Phase 1 — v0, the walking skeleton
+
+## Stage 0 — Foundation
+
+- Repo, TypeScript, `bun build --compile` targeting `linux-x64`, `linux-arm64`, `darwin-x64`,
+  `darwin-arm64`, `windows-x64`
+- GitHub Actions matrix running tests on **Windows, macOS, and Linux from the first commit**
+- Config at `~/.seri/` (Unix) and `%LOCALAPPDATA%\seri\` (Windows); API keys from env or config
+
+The CI matrix is not premature. Part IV's cross-platform bugs are silent, and they are cheap to
+catch here and expensive to find in month three.
+
+**Verify:** `seri --version` builds and runs on all three OSes in CI.
+
+## Stage 1 — Tools, no model attached
+
+Pure functions over the filesystem — the entire stage is testable without an API key.
+
+- `read_file`, `write_file`
+- `edit`: 3-tier cascade (exact → line-trimmed → whitespace-normalized), ambiguity guard, and the
+  disproportionate-match guard *[Layer 2]*
+- `grep` / `glob`, vendored ripgrep binaries per platform
+- `bash` (detect Git Bash on Windows; unavailable if absent) and `powershell` (target 5.1 baseline)
+
+Cross-platform correctness is the real work here, not the cascade:
+
+- **CRLF vs LF** — normalize on read, preserve on write, or tier 0 fails constantly on Windows checkouts
+- **Case sensitivity** — `Foo.ts` vs `foo.ts` resolves differently per OS; affects the tier-0 uniqueness contract
+- **Atomic write** — `write-file-atomic` for the Windows retry path when a watcher or antivirus holds the file
+- **Path limits** — `MAX_PATH` 260, reserved names (`CON`, `NUL`, `AUX`)
+
+**Verify:** test suite green on all three OSes, with explicit cases for CRLF matching, case
+collision, and atomic write against a locked file.
+
+## Stage 2 — Loop, provider, gate → **v0 ships**
+
+- Stateless ReAct loop: message array, tool dispatch, terminate on no-tool-call, max-iteration and
+  token-budget backstops *[Layer 0]*
+- Provider interface with **one** implementation (Anthropic direct via AI SDK)
+- Permission gate: three modes with cycling — read-only / approve-each / auto *[Layer 6 base]*
+- AGENTS.md loaded at startup, nearest-in-tree
+- Session persist + resume as JSON (SQLite deferred)
+- Streaming stdout and readline — **no TUI components yet**
+
+Deferring the TUI is deliberate, and cheap because of the rendering model we chose (below):
+streaming stdout *is* the foundation the inline TUI builds on, not a throwaway. Stage 11 enriches
+this output layer; it does not replace it.
+
+**Verify:** given a scratch repo and a real task, `seri` completes it end to end. Read-only mode
+demonstrably blocks writes. A killed session resumes with context intact.
+
+This is the first moment it is an agent.
+
+---
+
+# Phase 2 — v1, the fully working MVP
+
+v0 is usable but degrades on two axes: long sessions exhaust the context window, and edits
+accumulate irreversibly. These two stages close that, and land **before** v0 is considered finished
+work.
+
+## Stage 3 — Compaction
+
+- Trigger at a configurable context threshold
+- Summary emits the structured **goal / progress / blockers / next-steps** schema *[OpenCode #5]*
+- Eviction order: raw older tool transcripts first; preserve decisions, code, and the task thread
+- **Instrument the threshold.** `RESEARCH.md` marks the field's numbers [CONTESTED] (~40% degradation
+  folklore, ~50% and ~95% triggers conflicting). We measure ours rather than inheriting a guess —
+  one of the few places this project could contribute a real result.
+
+**Verify:** a 200-turn session completes without window overflow. Compaction output contains all
+four fields. Task-relevant facts from turn 5 survive to turn 150.
+
+## Stage 4 — Checkpoints
+
+- Every edit commits to a **shadow ref**, outside the user's branch *[Aider #4 adapted / Cline #2]*
+- One-command undo with a reviewable diff
+- `/rewind` for conversation history *[Gemini #1]*
+
+Filesystem history and conversation history are separate axes; both are needed for the trust
+proposition to hold.
+
+**Verify:** after N edits, undo restores byte-identical prior state. The user's branch and reflog
+show no pollution. `/rewind` restores conversation state without touching the filesystem.
+
+**v1 is the fully working MVP.** — reached 2026-08-04 with Stage 4 (PR #17).
+
+---
+
+# Phase 3 — Capability
+
+## Stage 5 — Verification loop
+LSP diagnostics after every successful edit, fed back to the model *[OpenCode #1]*. Reflection on
+edit failure: re-prompt with the failed block plus actual current file content *[Aider #2]*.
+`RESEARCH.md` calls this the cheapest reliability win available.
+**Verify:** an edit introducing a type error is detected and self-corrected within the same turn.
+
+## Stage 6 — Subagents
+Named roles — `explore` (read-only), `plan` (no write), `code`, `test` *[Kimi #1 / Factory #3]*.
+One-level recursion limit *[Claude Code #2]*. Parallel-by-default with explicit serialization on
+shared files *[Amp #2]*.
+**Verify:** parallel explore subagents return summaries; the recursion guard holds under attempted
+nesting; token multiplication is measured, not assumed.
+
+### 6b — the `curator` role and persistent memory *[Hermes #1–#6]*
+
+Sequenced here rather than as its own stage because it is not new machinery: a post-turn learning
+pass **is** an isolated context with a restricted toolset, which is exactly what Stage 6 builds. It
+lands after the four task roles work, in the same stage.
+
+- **Memory store.** `MEMORY.md` per project (~2,200 chars) and `USER.md` per machine (~1,375),
+  under `~/.seri/memories/`, never in the repo. Write-only tool (`add` / `replace` / `remove` by
+  substring — no `read`, it is already in the prompt). **Overflow hard-fails** with the overage and
+  a demand to consolidate in the same turn; it never auto-drops entries. Budget percentage is
+  rendered into the volatile tier so the model sees the pressure.
+- **Frozen per session.** Writes hit disk immediately, enter the prompt next session (Stage B).
+- **Injection scan on write** — injection patterns, credential signatures, invisible Unicode.
+- **The curator.** After a turn completes and the response is delivered, a child agent runs on the
+  transcript with tools whitelisted to memory + recipe writes. **No shell, no edit, no web.** It
+  counts against the one-level recursion limit. It needs Stage A's `AbortSignal`. Everything it
+  writes is marked with its provenance.
+- **Approval gate, default ON.** Writes stage to `~/.seri/pending/`; `/memory pending`, `/memory
+  diff`, `/memory approve`, `/memory reject`. Inverted from Hermes' default, deliberately —
+  rationale in `ARCHITECTURE.md` Part I, Hermes #5.
+- **Trigger.** Turn count is the baseline; also fire when compaction is approaching, since a save
+  prompted at 90% context outruns the flush that would otherwise lose the fact (Part II §9).
+
+**Verify:** a correction given in session 1 changes behavior in session 2 without being repeated.
+A write exceeding the cap returns an error and the model consolidates rather than the store growing.
+The curator provably cannot edit a file or run a command — asserted against a hostile transcript
+that tries to make it. A staged write is visible, diffable, and rejectable before it takes effect.
+Token cost per turn of running the curator is **measured** and reported, not assumed cheap.
+
+## Stage 7 — Routing and provider breadth
+OpenRouter breadth tier; architect/editor split *[Aider #1]*; oracle escalation with read-only tools
+*[Amp #1]*; mid-session model switching with context preserved *[Crush #1]*; Catwalk-style catalog.
+The `curator` from 6b becomes a routing target like any other role — a cheap auxiliary model, which
+is what Hermes exposes as `auxiliary.background_review`. No new design; one more entry in a routing
+table that already exists.
+**Verify:** model switches mid-session without context loss; oracle cannot write.
+
+## Stage 8 — Daemon  ·  **MOVED: post-release**
+`seri serve` — the transport across the boundary that has existed since Stage 0. Multi-session,
+SDK, headless `seri exec`.
+
+Sessions move from JSON files to SQLite here, which is what makes **FTS5 cross-session search**
+*[Hermes #8]* nearly free: keyword full-text over every past session, no embeddings — the same call
+Cursor #1 makes. Deferred to this stage on sequencing alone; doing the storage migration before the
+daemon needs it would mean doing it twice.
+
+**This is where the assistant arc starts** (constraint #3). A daemon that owns sessions is what
+every non-terminal surface is a client of — Hermes reached Slack, Discord and IDEs by having one,
+not by designing for them *[Hermes #15]*. Two things become available here and neither is a v0.1.0
+concern:
+
+- **Scheduled runs** *[Hermes #12]* — each firing in a **fresh isolated session** that inherits no
+  conversation context, with recursive scheduling prohibited. **Precondition, not a detail:** an
+  unattended run has no human to answer the permission gate, so it gets a strictly smaller
+  permission surface than an attended one. Read-and-report first. Unattended writes need an answer
+  to a problem Part V lists as unsolved, and shipping a scheduler without one is disabling the base
+  safety layer on a timer.
+- **Idle-timeout memory flush** — a gateway session that ends by timing out never reaches a clean
+  end-of-session write, so the curator flushes proactively before the timeout rather than losing
+  the turn's learnings.
+
+**Verify:** two concurrent sessions run isolated against one daemon. A fact from a session weeks old
+is retrievable by keyword. A scheduled run cannot escalate its own permissions, cannot schedule
+another run, and inherits no context from the session that created it.
+
+---
+
+# Phase 4 — Hardening
+
+## Stage 9 — OS sandbox upgrade tier  ·  **MOVED: post-release**
+`bwrap --unshare-net` on Linux, `sandbox-exec` with SBPL on macOS, `taskkill /T /F` for process-tree
+cleanup on Windows. Startup capability probe surfaced via `seri doctor`.
+**Verify:** network denied on Linux/macOS; `seri doctor` correctly reports the Base tier on native
+Windows rather than claiming enforcement it lacks.
+
+## Stage 10 — Extensibility  ·  **MOVED: post-release**
+MCP with lazy tool-search *[Codex #2]*; deterministic hooks *[Claude Code #1]*; one recipe format
+with default-on diff preview *[Goose #1 + its security lesson]*.
+
+The recipe format gets a **write** path here, not just a load path: the `curator` from 6b authors
+recipes as procedural memory after complex or hard-won work *[Hermes #7]*. It authors **the** recipe
+format — Part II §5 says one artifact, and an agent-authored "skill" that is not a recipe would make
+it two. The default-on diff preview is already the approval gate; there is no second one to build.
+Progressive disclosure comes along with it: metadata-only listing, full body on demand.
+**Verify:** a third-party MCP server loads and its tools are indistinguishable from built-ins; a
+PreToolUse hook blocks a matching command deterministically. A curator-authored recipe is loadable,
+previewable, and visibly distinguishable from a human-authored one.
+
+## Stage 11 — TUI and distribution  ·  **MOVED: runs after Stage 7, and gates the release**
+
+**TUI: Ink, rendering inline.** Not a full-screen alternate-buffer app. Two styles exist in this
+space and they are opposites — Claude Code renders **inline**, progressively into normal terminal
+flow, preserving the user's scrollback; OpenCode renders **full-screen** via the alternate screen
+buffer (`\x1b[?1049h`), owning the display and repainting frames. We take the former.
+
+Consequence: this stage **enriches** Stage 2's streaming stdout rather than replacing it — status
+line, spinner, diff rendering, mode indicator, multiline input, all layered onto the same append-only
+output model. Full-screen would have meant rewriting that layer wholesale. Because the work is
+incremental, it can also be pulled earlier than Stage 11 if the ergonomics start to hurt.
+
+Distribution: install scripts (`curl | sh`, `irm | iex`), PATH handling, Homebrew tap, Scoop bucket,
+`seri update`.
+
+**Verify:** clean-machine install succeeds on all three OSes without admin rights. Scrollback
+survives a session — prior output remains in terminal history after `seri` exits.
+
+---
+
+# Open items
+
+| Item | Blocking? | Note |
+|---|---|---|
+| Name | **Settled & shipped** | Seri, binary `seri`; lab is Seriora Research; repo `lzvxck/seri-agent`, apex `seriora.ai`. Rename landed 2026-08-04 (PR #14). |
+| TUI framework | **Settled** | Ink, inline rendering (Claude Code style, not OpenCode's full-screen). Work is incremental on Stage 2's output layer. |
+| Go MCP SDK maturity | No longer | Moot — TypeScript SDK is the reference. |
+| Curator token cost | Not yet | A learning pass per turn compounds on top of Stage 6's 3–15× subagent multiplier. Hermes pays for it with a warm prefix cache and a cheap auxiliary model; we get the second at Stage 7 and the first from Stage B. **Measure it at 6b before deciding the default is on.** |
+| Curator trigger | Not yet | Turn count is the baseline. Firing on an approaching compaction threshold is the more principled trigger (Part II §9) and is untested — instrument it with the Stage 3 threshold measurement rather than guessing. |
+| Unattended permission surface | **Blocks scheduled runs** | What a run with no human present may do. Part V's long-horizon autonomy problem, arriving concretely at Stage 8. Read-and-report is the safe floor; unattended writes are unanswered. Decide before the scheduler exists, not after. |
+| Public positioning vs. constraint #3 | No | `README.md` and `AGENTS.md` say "coding-agent CLI". Deliberate — the assistant surfaces are post-release. Revisit when Stage 8 ships something a user can point at. |
+| Code signing | No | Apple notarization ($99/yr), Windows Authenticode. Not needed for `curl \| sh`; needed for broad adoption. |
+| License, repo visibility | No | Decide before first public release. |
