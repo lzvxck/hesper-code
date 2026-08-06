@@ -44,8 +44,10 @@ function fakePolar(
   calls: { method: string; args: unknown }[] = [],
   orders: { id: string }[] = [],
   // Only `subscriptions.get` carries pending_update — customer state does not — so a scheduled
-  // plan change can only be set up here. Null unless a test says otherwise.
-  pendingUpdate: { productId: string; appliesAt: Date } | null = null,
+  // plan change can only be set up here. Null unless a test says otherwise; an Error rejects
+  // instead, the same way `updateError` does for subscriptions.update, because getSubscription
+  // has no 404 tolerance and this call can fail on its own.
+  pendingUpdate: { productId: string; appliesAt: Date } | Error | null = null,
 ) {
   const client = {
     checkouts: {
@@ -63,7 +65,9 @@ function fakePolar(
     subscriptions: {
       get: (args: unknown) => {
         calls.push({ method: "subscriptions.get", args });
-        return Promise.resolve({ id: (args as { id: string }).id, pendingUpdate });
+        return pendingUpdate instanceof Error
+          ? Promise.reject(pendingUpdate)
+          : Promise.resolve({ id: (args as { id: string }).id, pendingUpdate });
       },
       update: (args: unknown) => {
         calls.push({ method: "subscriptions.update", args });
@@ -587,7 +591,7 @@ describe("route handlers", () => {
   // The session's own orders, for /api/invoice and /billing.
   let sessionOrders: ReturnType<typeof order>[] = [];
   // A plan change Polar has already accepted for the session's subscription, if any.
-  let sessionPendingUpdate: { productId: string; appliesAt: Date } | null = null;
+  let sessionPendingUpdate: { productId: string; appliesAt: Date } | Error | null = null;
   // account_status for the session; /billing's ensureProvisioned and its own past-due read
   // both go through this same row.
   let accountStatusRow: { plan: string; subscription_status: string } | null = {
@@ -924,6 +928,23 @@ describe("route handlers", () => {
 
       expect(html).toContain("then Pro");
       expect(html).not.toContain("Renews");
+    });
+
+    /*
+     * The pending-update read is a second, independent Polar call, and getSubscription has none
+     * of getCustomerState's 404 tolerance — a plan change made in another tab between the two
+     * can 404 it. Losing it must cost the scheduled line only: blanking the renewal date and
+     * the price for a paying customer would be worse than never having asked.
+     */
+    test("keeps the renewal date and price when the pending-update read fails", async () => {
+      accountStatusRow = { plan: "max", subscription_status: "active" };
+      sessionSubscriptions = [sub("sub_session", "prod_max")];
+      sessionPendingUpdate = Object.assign(new Error("polar responded 404"), { statusCode: 404 });
+
+      const html = renderToStaticMarkup(await billingPage.default());
+
+      expect(html).toContain("Renews");
+      expect(html).toContain("$20.00/mo");
     });
 
     test("shows the past-due banner only when account_status says past_due", async () => {

@@ -76,6 +76,11 @@ const NO_LIVE_SUBSCRIPTION: Attempt<LiveSubscription | null> = { ok: true, value
  * pending update into `account_status` would be cheaper at runtime and costs a column, a
  * migration and a second writer of a deliberately single-writer table.
  *
+ * That second call gets its own `attempt` rather than riding on the caller's. `getSubscription`
+ * has none of `getCustomerState`'s 404 tolerance, so a plan change made in another tab between
+ * the two calls can fail it on its own — and letting that failure blank the renewal date and the
+ * price for a paying customer would be a worse page than the one that never asked.
+ *
  * Matching against the already-known `plan` is deliberate: this may only extend what
  * `ensureProvisioned` returned, never contradict it. A race that changed the plan between the
  * two calls must not show one plan's title next to another plan's renewal date and price.
@@ -88,7 +93,8 @@ async function liveSubscription(
   const state = await getCustomerState(deps.polar, userId);
   const paid = paidSubscription(state?.activeSubscriptions ?? [], deps.products);
   if (!paid || paid.plan !== plan) return null;
-  return { subscription: paid.subscription, scheduled: await scheduledChange(deps, paid.subscription) };
+  const scheduled = await attempt("scheduled plan change", () => scheduledChange(deps, paid.subscription));
+  return { subscription: paid.subscription, scheduled: scheduled.ok ? scheduled.value : null };
 }
 
 export default async function BillingPage() {
