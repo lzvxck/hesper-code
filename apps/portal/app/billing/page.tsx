@@ -69,12 +69,18 @@ const NO_LIVE_SUBSCRIPTION: Attempt<LiveSubscription | null> = { ok: true, value
  * time. Measured on 2026-08-06: the same subscription read "Renews 4 September" on an ordinary
  * load and "Max until 4 September, then Pro" minutes later with the cache skipped.
  *
- * The cost, stated rather than buried: `scheduledChange` makes a second Polar round trip
- * (`subscriptions.get`, the only call that carries `pending_update` — customer state does not),
- * so a steady-state /billing load for a paid customer goes from one Polar call to two. It
- * short-circuits without that trip when a cancellation is already scheduled. Persisting the
- * pending update into `account_status` would be cheaper at runtime and costs a column, a
- * migration and a second writer of a deliberately single-writer table.
+ * The cost, stated rather than buried, and counted twice because only the second number is the
+ * one to budget against: `scheduledChange` makes a second Polar round trip (`subscriptions.get`,
+ * the only call that carries `pending_update` — customer state does not), so *this function*
+ * goes from one Polar call to two. *The page* goes from four to five —
+ * `getPaymentMethod`, `listOrders`, `createCustomerSession`, `getCustomerState`, and now
+ * `subscriptions.get` — which is the figure that matters against the shared 429 limit described
+ * above. It short-circuits without the extra trip when a cancellation is already scheduled.
+ *
+ * Persisting the pending update into `account_status` would be cheaper at runtime and costs a
+ * column and a migration. Not a second writer: `upsertFromSubscription` in apps/server is the
+ * only one, and it would be that same function writing one more field off the same payload it
+ * already reads `cancelAtPeriodEnd` from.
  *
  * That second call gets its own `attempt` rather than riding on the caller's. `getSubscription`
  * has none of `getCustomerState`'s 404 tolerance, so a plan change made in another tab between
