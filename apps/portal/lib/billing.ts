@@ -65,7 +65,10 @@ function scheduledToCancel(subscriptions: ActiveSubscription[]): boolean {
   return subscriptions.some((s) => s.cancelAtPeriodEnd);
 }
 
-const ALREADY_PAID = "This account already has a paid subscription; change it under Manage billing.";
+// createCheckout is only ever reached from the plans page's own checkout form, so "here" is
+// where the customer already is — unlike the Manage billing button this used to name, which
+// is gone from every page but the past-due banner.
+const ALREADY_PAID = "This account already has a paid subscription; change it from the plans above.";
 
 async function sessionPaidSubscription(deps: BillingDeps) {
   // Found from the session's external id, never from a subscription id in the request, and

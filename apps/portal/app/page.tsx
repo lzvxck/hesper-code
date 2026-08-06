@@ -64,15 +64,17 @@ export default async function AccountPage({
    *
    * `plan === null` is an active subscription on a product this deployment has no mapping
    * for: an archived one, and a state that recurs by design, since production products are
-   * created fresh and subscribers on retired ones stay subscribed. Manage billing is the
-   * honest destination and Polar genuinely does handle it.
+   * created fresh and subscribers on retired ones stay subscribed. Billing shows what Polar
+   * holds for this account — invoices and payment method — but nothing reachable from the
+   * app can cancel a product it does not recognize: /api/portal, which can, is linked only
+   * from the past-due banner now.
    */
   const { heading, blurb } =
     plan === null
       ? {
           heading: "You're on a plan we no longer offer.",
           blurb:
-            "Your subscription is still active and nothing has changed about it, but it is on a product that has been retired, so it cannot be switched from here. Manage billing has your invoices and can cancel it; after that you'll land back on Free and can pick a current plan.",
+            "Your subscription is still active and nothing has changed about it, but it is on a product that has been retired, so it cannot be switched from here. Billing has your invoices and payment method.",
         }
       : scheduled?.kind === "ends"
         ? {
