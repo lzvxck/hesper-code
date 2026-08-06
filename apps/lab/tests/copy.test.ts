@@ -3,28 +3,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
-import {
-  FUTURITY,
-  OVERCLAIMS,
-  UNSHIPPED,
-  found,
-  visibleText,
-} from "../../../packages/copy-policy/claims";
+import { assertClean, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
+import { ProductList, type Product } from "../app/ProductList";
 
-/*
- * The page is rendered, not read as source. Reading page.tsx as text scanned its code comments
- * as if they were copy, in both directions: a comment holding the pinned phrases kept this suite
- * green while the copy underneath contradicted them, and a comment that merely mentioned an OS
- * sandbox turned it red while nothing on the page said so.
- *
- * Rendering is cheap because this is a server component with no data of its own, and it asserts
- * what actually ships. renderToStaticMarkup produces the initial state and runs no effects,
- * which is what we want — Reveal's animation is not copy.
- */
+const FIXTURES: Product[] = [
+  { name: "one", href: "https://example.com/one", body: "The first product." },
+  { name: "two", href: "https://example.com/two", body: "The second product." },
+];
+
+// Why the page is rendered rather than read as source, and what rendering does not cover, are
+// both on assertClean.
 const MARKUP = renderToStaticMarkup(createElement(Home));
-const COPY = visibleText(MARKUP);
+const COPY = textNodes(MARKUP);
 
 /*
  * The <title> and <meta description> make the same kind of claim and travel furthest from the
@@ -35,12 +27,8 @@ const COPY = visibleText(MARKUP);
 const META = `${metadata.title} ${metadata.description}`;
 
 describe("seriora.ai copy", () => {
-  test("makes no claim it cannot back", () => {
-    expect(found(`${COPY} ${META}`, OVERCLAIMS)).toEqual([]);
-  });
-
-  test("promises nothing that has not shipped", () => {
-    expect(found(`${COPY} ${META}`, [...FUTURITY, ...UNSHIPPED])).toEqual([]);
+  test("says nothing the copy policy forbids", () => {
+    assertClean(`${COPY} ${META}`);
   });
 
   test("leads with the research thesis", () => {
@@ -68,12 +56,27 @@ describe("seriora.ai copy", () => {
     const products = main![0].match(/<ul id="products"[\s\S]*?<\/ul>/);
     expect(products).not.toBeNull();
 
-    expect(visibleText(main![0].replace(products![0], ""))).not.toMatch(/\bseri\b/i);
+    expect(textNodes(main![0].replace(products![0], ""))).not.toMatch(/\bseri\b/i);
   });
 
-  test("puts the products in a grid that takes a second entry unchanged", () => {
-    const grid = MARKUP.match(/<ul id="products"[^>]*>/);
-    expect(grid).not.toBeNull();
-    expect(grid![0]).toContain("md:grid-cols-2");
+  /*
+   * The lab ships one product and its neutrality criterion is that a second needs no rewrite,
+   * so the list is rendered with two fixture entries and the claim asserted directly. This
+   * used to assert `toContain("md:grid-cols-2")` on the rendered <ul>, which went red on any
+   * restyle and did not test its own name: a class says nothing about whether a second entry
+   * arrives as a sibling of the first or needs the section rebuilt around it.
+   */
+  test("puts the products in a list that takes a second entry unchanged", () => {
+    const render = (products: Product[]) =>
+      renderToStaticMarkup(createElement(ProductList, { products }));
+
+    const one = render([FIXTURES[0]!]);
+    const two = render(FIXTURES);
+
+    // The container is byte-identical either way: nothing about the list is per-count.
+    expect(two.slice(0, two.indexOf(">") + 1)).toBe(one.slice(0, one.indexOf(">") + 1));
+    // And the second entry is a sibling of the first, carrying its own copy.
+    expect(two.match(/<li\b/g)).toHaveLength(2);
+    expect(textNodes(two)).toContain("The second product.");
   });
 });
