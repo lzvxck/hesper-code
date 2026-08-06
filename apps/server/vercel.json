@@ -1,0 +1,3 @@
+{
+  "ignoreCommand": "git cat-file -e \"$VERCEL_GIT_PREVIOUS_SHA^{commit}\" 2>/dev/null || exit 1; git diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- :/apps/server :/packages/plans :/bun.lock :/package.json"
+}
