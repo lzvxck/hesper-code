@@ -1,4 +1,5 @@
 export { Button, buttonVariants } from "./button";
+export { ComingSoon } from "./coming-soon";
 export { GitHubMark } from "./github-mark";
 export { Reveal } from "./reveal";
 export { RevealNoScript } from "./reveal-noscript";
