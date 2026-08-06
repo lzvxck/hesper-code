@@ -49,7 +49,9 @@ describe("apps/web copy", () => {
    * is where this site's real props for <ComingSoon> are written.
    */
   test("the holding page says nothing the copy policy forbids", () => {
-    assertClean(`${textNodes(renderToStaticMarkup(createElement(Holding)))} ${META}`);
+    assertClean(`${textNodes(renderToStaticMarkup(createElement(Holding)))} ${META}`, {
+      allowComingSoon: true,
+    });
   });
 
   // D7: the gate and the bound are what make the learning claim checkable, so both are pinned.

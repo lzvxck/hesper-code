@@ -11,13 +11,25 @@ import { assertClean } from "../src/index";
  */
 describe("the Coming soon exemption", () => {
   test("admits the exact phrase the holding page is built around", () => {
-    expect(() => assertClean("Coming soon")).not.toThrow();
+    expect(() => assertClean("Coming soon", { allowComingSoon: true })).not.toThrow();
   });
 
   // Case-insensitive on purpose: the phrase is a sentence opener on one site and mid-sentence
   // elsewhere, and the policy is about the claim, not the capitalisation.
   test("admits it whatever its case", () => {
-    expect(() => assertClean("coming soon")).not.toThrow();
+    expect(() => assertClean("coming soon", { allowComingSoon: true })).not.toThrow();
+  });
+
+  /*
+   * The surface bound, and the reason the option exists rather than the mask being
+   * unconditional. `assertClean` is also what lab's and web's HOMEPAGE cases call, so an
+   * always-on mask would let the marketing pages promise futurity in the one phrasing the
+   * policy is least likely to be re-read about — with both suites green. The default is the
+   * old behaviour, which is also what keeps the four existing call sites unedited.
+   */
+  test("rejects the phrase for any caller that has not opted in", () => {
+    expect(() => assertClean("Coming soon")).toThrow("/\\bsoon\\b/i");
+    expect(() => assertClean("Coming soon", { allowComingSoon: false })).toThrow("/\\bsoon\\b/i");
   });
 
   /*
@@ -27,13 +39,13 @@ describe("the Coming soon exemption", () => {
    * survive the exemption.
    */
   test("still rejects a bare soon", () => {
-    expect(() => assertClean("Available soon")).toThrow();
-    expect(() => assertClean("Landing soon")).toThrow();
+    expect(() => assertClean("Available soon", { allowComingSoon: true })).toThrow();
+    expect(() => assertClean("Landing soon", { allowComingSoon: true })).toThrow();
   });
 
   test("leaves the rest of the futurity list untouched", () => {
-    expect(() => assertClean("On our roadmap")).toThrow();
-    expect(() => assertClean("planned for later")).toThrow();
+    expect(() => assertClean("On our roadmap", { allowComingSoon: true })).toThrow();
+    expect(() => assertClean("planned for later", { allowComingSoon: true })).toThrow();
   });
 
   /*
@@ -43,7 +55,8 @@ describe("the Coming soon exemption", () => {
    * string had failed for some unrelated reason.
    */
   test("cannot launder an overclaim standing next to it", () => {
-    const overclaiming = () => assertClean("Coming soon — the first fully autonomous agent");
+    const overclaiming = () =>
+      assertClean("Coming soon — the first fully autonomous agent", { allowComingSoon: true });
 
     expect(overclaiming).toThrow("/the first/i");
     expect(overclaiming).toThrow("/fully autonomous/i");

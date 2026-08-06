@@ -119,6 +119,6 @@ describe("apps/portal holding", () => {
     const copy = textNodes(HOLDING_MARKUP);
 
     expect(copy).toContain("Coming soon");
-    assertClean(copy);
+    assertClean(copy, { allowComingSoon: true });
   });
 });
