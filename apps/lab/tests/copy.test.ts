@@ -3,20 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, test } from "bun:test";
 
-import { FUTURITY, OVERCLAIMS, UNSHIPPED, found, textNodes } from "@seri/copy-policy";
+import { assertClean, textNodes } from "@seri/copy-policy";
 import { metadata } from "../app/layout";
 import Home from "../app/page";
 
-/*
- * The page is rendered, not read as source. Reading page.tsx as text scanned its code comments
- * as if they were copy, in both directions: a comment holding the pinned phrases kept this suite
- * green while the copy underneath contradicted them, and a comment that merely mentioned an OS
- * sandbox turned it red while nothing on the page said so.
- *
- * Rendering is cheap because this is a server component with no data of its own, and it asserts
- * what actually ships. renderToStaticMarkup produces the initial state and runs no effects,
- * which is what we want — Reveal's animation is not copy.
- */
+// Why the page is rendered rather than read as source, and what rendering does not cover, are
+// both on assertClean.
 const MARKUP = renderToStaticMarkup(createElement(Home));
 const COPY = textNodes(MARKUP);
 
@@ -29,12 +21,8 @@ const COPY = textNodes(MARKUP);
 const META = `${metadata.title} ${metadata.description}`;
 
 describe("seriora.ai copy", () => {
-  test("makes no claim it cannot back", () => {
-    expect(found(`${COPY} ${META}`, OVERCLAIMS)).toEqual([]);
-  });
-
-  test("promises nothing that has not shipped", () => {
-    expect(found(`${COPY} ${META}`, [...FUTURITY, ...UNSHIPPED])).toEqual([]);
+  test("says nothing the copy policy forbids", () => {
+    assertClean(`${COPY} ${META}`);
   });
 
   test("leads with the research thesis", () => {

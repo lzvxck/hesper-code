@@ -7,7 +7,9 @@
  * file exists to make impossible.
  */
 
-export const OVERCLAIMS = [
+import { expect } from "bun:test";
+
+const OVERCLAIMS = [
   /the first/i,
   /the only/i,
   /world's first/i,
@@ -27,10 +29,10 @@ export const OVERCLAIMS = [
  * be able to" are the same promise and neither was caught. Deliberately NOT `will be` — the
  * portal legitimately says "Nothing more will be charged."
  */
-export const FUTURITY = [/roadmap/i, /\bsoon\b/i, /stage \d/i, /planned/i, /in the future/i];
+const FUTURITY = [/roadmap/i, /\bsoon\b/i, /stage \d/i, /planned/i, /in the future/i];
 
 /* Real, but not in the released binary — claiming any of it makes the page falsifiable. */
-export const UNSHIPPED = [
+const UNSHIPPED = [
   /daemon/i,
   /scheduled run/i,
   /unattended/i,
@@ -42,8 +44,34 @@ export const UNSHIPPED = [
 
 // Reporting every phrase that hit, rather than asserting one at a time: a failure names the
 // offending words instead of dumping the whole page as the received value.
-export const found = (copy: string, patterns: RegExp[]) =>
+const found = (copy: string, patterns: RegExp[]) =>
   patterns.filter((pattern) => pattern.test(copy));
+
+/*
+ * The whole policy in one assertion, so the two sites' suites cannot drift the way the lists
+ * they check did. They already had: apps/web asserted FUTURITY and UNSHIPPED as two tests and
+ * apps/lab combined them into one, each under its own copy of the same preamble with a clause
+ * changed. What belongs in an app's own test file is what is structural to that page.
+ *
+ * Pass rendered markup run through `textNodes`, not page source. Reading page.tsx as text
+ * scanned its code comments as if they were copy, in both directions: a comment holding the
+ * pinned phrases kept a suite green while the JSX underneath had been deleted, and a comment
+ * that merely mentioned an OS sandbox turned it red while nothing on the page said so.
+ *
+ * PRECONDITION on rendering, and the reason it is not blanket coverage of a page:
+ * `renderToStaticMarkup` produces the INITIAL render and nothing else. Copy a client component
+ * only shows after an interaction is simply not in the string — Radix's Tabs renders no closed
+ * TabsContent, which is how apps/web shipped two install commands and two platform notes that
+ * no pattern here was ever tested against. A caller whose page hides copy that way has to feed
+ * it in itself, as apps/web now does with InstallTabs' PLATFORMS. The other edge: the same
+ * function throws outright on an async server component, so this technique has a real boundary
+ * — every page it is used on today is sync.
+ */
+export function assertClean(copy: string): void {
+  expect(found(copy, OVERCLAIMS)).toEqual([]);
+  expect(found(copy, FUTURITY)).toEqual([]);
+  expect(found(copy, UNSHIPPED)).toEqual([]);
+}
 
 /*
  * React's five escapes, and the pattern that finds them, from one list.
