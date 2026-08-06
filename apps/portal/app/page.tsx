@@ -1,17 +1,14 @@
 import { INCLUDED_SPEND_RATIO, PLAN_MONTHLY_USD, type Plan, isPaidPlan } from "@seri/plans";
-import { Button, SiteFooter, SiteNav } from "@seri/ui";
+import { Button } from "@seri/ui";
 import { redirect } from "next/navigation";
-import type { ReactNode } from "react";
 
+import { Shell } from "@/app/Shell";
 import { planCards } from "@/lib/accountView";
-import { endSession } from "@/lib/actions";
 import { getPolarClient } from "@/lib/polar";
 import { ensureProvisioned } from "@/lib/provisioning";
 import { getSessionUser } from "@/lib/session";
 import { isFreshLoad, needsMarkerlessReload } from "@/lib/routes";
 import { getSupabaseClient } from "@/lib/supabase";
-
-const REPO_URL = "https://github.com/lzvxck/seri-agent";
 
 const TIER_NAME: Record<Plan, string> = { free: "Free", pro: "Pro", max: "Max", ultra: "Ultra" };
 
@@ -35,39 +32,6 @@ function tierCopy(plan: Plan) {
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
-}
-
-function Shell({ email, children }: { email: string; children: ReactNode }) {
-  return (
-    <>
-      <SiteNav wordmark="seri" repoUrl={REPO_URL} links={[]} />
-
-      <main id="top">
-        <section className="mx-auto max-w-[1080px] px-11 pt-34 pb-29 md:px-16 md:pt-51 md:pb-34">
-          <p className="mb-11 font-mono text-ink-subtle uppercase tracking-[1px]">{email}</p>
-          {children}
-
-          <div className="mt-29 flex flex-wrap items-center gap-8 md:mt-34">
-            <Button asChild variant="outline">
-              {/* Invoices, receipts, payment method and cancellation all live in Polar. */}
-              <a href="/api/portal">Manage billing</a>
-            </Button>
-            <form action={endSession}>
-              <Button type="submit" variant="ghost">
-                Sign out
-              </Button>
-            </form>
-          </div>
-        </section>
-      </main>
-
-      <SiteFooter
-        wordmark="seri"
-        repoUrl={REPO_URL}
-        builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
-      />
-    </>
-  );
 }
 
 /*
@@ -128,7 +92,7 @@ export default async function AccountPage({
           };
 
   return (
-    <Shell email={user.email}>
+    <Shell email={user.email} current="account">
       <h1 className="text-[38px] leading-[1.1] font-bold tracking-[-1px] md:text-display">{heading}</h1>
       <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">{blurb}</p>
 

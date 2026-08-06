@@ -6,7 +6,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL("https://portal.seriora.ai"),
   title: "Seriora Portal",
-  description: "Manage your seri plan and billing.",
+  description: "Your plan and billing for seri.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -17,6 +17,7 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "types": [
+      "bun-types",
       "react",
       "node"
     ],
