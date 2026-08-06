@@ -98,6 +98,17 @@ describe("apps/portal holding", () => {
     }
   });
 
+  /*
+   * /holding is not special-cased, and must not become so again. proxy.ts used to carry a
+   * `pathname === HOLDING` next() ahead of the rewrite, which was a path exemption that made
+   * GET /holding answer 200 unauthenticated; the rewrite never needed it, because
+   * NextResponse.rewrite is internal and middleware does not re-run for the rewritten path.
+   * Deleting it left the whole suite green, which is why this case exists.
+   */
+  test("leaves /holding itself to authkit rather than exempting it from auth", async () => {
+    expect(await through("/holding")).toEqual({ rewrittenTo: null, reachedAuthkit: true });
+  });
+
   test("rewrites nothing while the flag is unset", async () => {
     delete process.env.SERI_COMING_SOON;
 
