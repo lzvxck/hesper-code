@@ -46,10 +46,11 @@ describe("getPaymentMethod", () => {
   });
 
   /*
-   * Measured against sandbox: a card attached during checkout comes back `is_default: false`,
-   * and that is how every current customer got theirs — the embed's own setAsDefault defaults
-   * to true, so only cards added through UpdateCard are flagged. Reading the flag alone showed
-   * "No payment method on file." to an active subscriber whose visa ···· 4242 was on file.
+   * The shape seen against sandbox on 2026-08-06: one customer, one card attached during
+   * checkout, `is_default: false`. Reading the flag alone showed "No payment method on file."
+   * to an active subscriber whose visa ···· 4242 was on file. One observation, and Polar
+   * documents no rule either way — see lib/paymentMethod.ts for what that does and does not
+   * license.
    */
   test("returns the only card when Polar flags none as default", async () => {
     const { fetchImpl } = fakeFetch({
