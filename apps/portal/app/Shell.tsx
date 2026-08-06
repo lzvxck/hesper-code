@@ -15,15 +15,13 @@ const REPO_URL = "https://github.com/lzvxck/seri-agent";
  * anything else and the compiled form gets a plain URL and nothing signs out. An onClick is
  * not the alternative — it would make this a client component, which nothing else here needs.
  */
-export function Shell({
-  email,
-  current,
-  children,
-}: {
+export type ShellProps = {
   email: string;
   current: "account" | "usage";
   children: ReactNode;
-}) {
+};
+
+export function Shell({ email, current, children }: ShellProps) {
   /*
    * The control row offers the page you are not on. Without this /usage was a dead end: its
    * only two controls were a "View usage" button pointing at itself and Polar's billing

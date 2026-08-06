@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { expect, mock, test } from "bun:test";
 
+// A type-only import: erased before it runs, so it does not defeat the deferred import below.
+import type { ShellProps } from "@/app/Shell";
 import { PLANS, USAGE } from "@/lib/routes";
 
 /*
@@ -18,7 +20,7 @@ const { Shell } = await import("@/app/Shell");
  * Only the in-app destinations: the wordmark anchor and the GitHub links are absolute or
  * in-page and belong to the chrome, not to the control row.
  */
-const inAppLinks = (current: "account" | "usage") =>
+const inAppLinks = (current: ShellProps["current"]) =>
   renderToStaticMarkup(
     createElement(Shell, { email: "customer@example.com", current, children: null }),
   ).match(/href="\/[^"]*"/g);
