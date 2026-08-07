@@ -8,10 +8,18 @@ Recorded 2026-08-07 after measuring a failure that this is the field's answer to
 Same seri binary, same prompt, same directory, fresh session per run, `read_file` task chosen so the
 permission gate is not a confound:
 
-| model | real tool-calls |
-|---|---|
-| `llama-3.3-70b-versatile` (current `DEFAULT_MODEL`) | **3/5** — two failed with Groq's `Failed to call a function` |
-| `openai/gpt-oss-120b` | **5/5** |
+| model | with tool guidance in the prompt | with the old 29-char prompt |
+|---|---|---|
+| `llama-3.3-70b-versatile` | **5/11** | 3/5 |
+| `openai/gpt-oss-120b` (now the default) | **20/20** | 5/5 |
+
+The right-hand column is what prompted the investigation; the left-hand column is what settles it.
+**Writing real tool guidance did not fix the weaker model** — it went from 3/5 to 5/11, two samples
+small enough to be the same number — while the stronger model went 20 for 20 on the same prompt in
+the same directory. So the prompt was not what was wrong, and a single prompt is not going to carry
+every family. (llama got 11 runs rather than 20: Groq's 100k tokens/day cap for that model ran out
+mid-batch and refilled at roughly one run per twenty minutes. The shortfall cannot flip the result —
+even 14/20 is not 20/20.)
 
 The failure mode is the model emitting the call as assistant **text** — `<function/write_file({...})>`
 — instead of a tool call, so the loop ends `done: no-tool-call` having done nothing.
