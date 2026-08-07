@@ -35,6 +35,13 @@ import { NightField } from "./night-field";
  * `min-h-[100svh]` lets the field fill the viewport instead of floating the three lines in a
  * band of ink on a tall screen.
  */
+/*
+ * `wordmark` names the ORGANISATION, not the product, and that became load-bearing when
+ * this page grew a logo. Before, the wordmark stood alone as a site label and "seri" read
+ * correctly on web. Under the Seriora mark it reads as the mark's own name, which is wrong
+ * — seri is the agent, Seriora is the lab that makes it. All three sites therefore lead
+ * with Seriora (lab and portal already did), and a product name belongs in `line`.
+ */
 export function ComingSoon({ wordmark, line }: { wordmark: string; line: string }) {
   return (
     <main
