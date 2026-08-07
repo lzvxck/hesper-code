@@ -69,6 +69,8 @@ be kept in sync.
 | 2 Loop, provider, gate | **done** — provider is Groq, not the Anthropic-direct the plan assumed |
 | 3 Compaction | **done** |
 | 4 Checkpoints | **done** — PR #17, CI green on all three OSes. **v1 is complete.** |
+| A Abort/cancellation | **done** — PR #23 |
+| 5 Verification loop | **done** — PR #41, and **retargeted**: diagnostics hang off `write_file`, not `edit`. See the stage's own section for why the original spec was unbuildable. |
 
 **The release moved, and that reorders everything after Stage 7.** The decision (2026-08-04): no
 release until the TUI is good, because it has to *look* right. That makes Stage 11 a release
@@ -86,7 +88,8 @@ hurt; it is that the TUI is now on the critical path.
 1. **Abort/cancellation** — not a numbered stage; see Stage A below. **Done** — PR #23.
 2. **Prompt tiers** — not a numbered stage; see Stage B below. Small, and it goes before Stage 5
    because everything after Stage 5 assembles prompts.
-3. **Stage 5** — verification loop (LSP diagnostics, edit-failure reflection).
+3. **Stage 5** — verification loop. **Done** (PR #41), as a check after `write_file` plus a
+   near-miss report on edit failure — not the LSP-per-edit the line above used to describe.
 4. **Stage 7a** — the gateway half: OpenRouter breadth tier, Catwalk-style catalog, mid-session
    model switching. **Moved ahead of Stage 6 (2026-08-06, user directive).** Unblocks billing
    Phase B, the spend cap, and the portal's usage surface.
@@ -303,11 +306,38 @@ show no pollution. `/rewind` restores conversation state without touching the fi
 
 # Phase 3 — Capability
 
-## Stage 5 — Verification loop
-LSP diagnostics after every successful edit, fed back to the model *[OpenCode #1]*. Reflection on
-edit failure: re-prompt with the failed block plus actual current file content *[Aider #2]*.
-`RESEARCH.md` calls this the cheapest reliability win available.
-**Verify:** an edit introducing a type error is detected and self-corrected within the same turn.
+## Stage 5 — Verification loop  ·  **built 2026-08-06, and not as specified below**
+
+The original spec — *"LSP diagnostics after every successful edit"* plus *"reflection re-prompting
+with the actual current file content"* — is **unbuildable against this codebase**, and that was
+discovered during the loop rather than at planning time. `edit` is not a file-mutating tool: its
+schema is `{content, oldString, newString}` (`provider/tools.ts`), a pure string transform that
+never touches disk. So a check after an `edit` reports on the *pre-edit* file, and at the failure
+site there is no path to read "current file content" from — the content came from the model's own
+arguments. The codebase had already reached this conclusion for checkpoints (`tools.ts`, the
+`FS_MUTATING_TOOL_NAMES` comment) and the plan did not carry it across.
+
+**What shipped instead:**
+- Diagnostics hang off **`write_file`**, the actual mutation point. `edit`'s schema is unchanged.
+- A failed `edit` returns a **near-miss report** — the closest candidate line, what it actually says,
+  what was searched for — replacing "current file content", which would convey nothing here.
+- Diagnostics come from the project's **explicitly configured** command (`SERI_VERIFY_COMMAND`).
+  Unset means nothing is spawned. There is **no auto-discovery**: Aider auto-runs only built-in
+  linters and requires an explicit `--lint-cmd` for project commands, and OpenCode never executes
+  project scripts at all. Auto-discovery would also let an approved `write_file` execute a script
+  from a cloned repo's `package.json` without passing the shell approval gate — the incident class
+  Part I already inherits the fix for (Goose #1).
+- Implemented as a `ToolSet → ToolSet` wrapper, so **`loop.ts` has a zero-line diff**.
+
+**Not built here, deliberately:** directory-level trust, which is what would make auto-discovery
+safe. It is a harness-level concept — Claude Code and VS Code both scope it to a directory, once,
+covering instruction files, hooks and servers together — so it belongs with **Stage 10**'s
+recipes/MCP/hooks, and after Stage B gives it a profile root to live in.
+
+**Verify:** the diagnostic reaches the model on the tool result of the write that caused it, and a
+failed edit names the line that actually differs. The stage's original acceptance line — "detected
+and **self-corrected** within the same turn" — conflates a deterministic claim with model behaviour;
+only the first half is assertable, and a test claiming the second would be vacuous.
 
 ## Stage 6 — Subagents
 Named roles — `explore` (read-only), `plan` (no write), `code`, `test` *[Kimi #1 / Factory #3]*.
