@@ -14,10 +14,6 @@ import { ComingSoon } from "@seri/ui";
  */
 export default function Holding() {
   return (
-    <ComingSoon
-      wordmark="seri"
-      line="A coding agent that learns from its own work."
-      builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
-    />
+    <ComingSoon wordmark="seri" line="A coding agent that learns from its own work." />
   );
 }
