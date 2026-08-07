@@ -23,11 +23,12 @@ that it changes **less than it sounds like** — three facts about this plan are
 
 1. **Layer 1 is a coding toolset** — read / write / edit / grep / glob / shell. Assistant-grade
    capability arrives through MCP, which is Stage 10, post-release.
-2. **The release gate is a TUI** (Stage 11). An assistant that lives only in a terminal is a coding
-   agent with extra steps; multi-surface is the daemon, Stage 8, post-release.
+2. **The release gate is a TUI** (Stage 11a for the TUI itself; 11b, distribution, is the gate). An
+   assistant that lives only in a terminal is a coding agent with extra steps; multi-surface is the
+   daemon, Stage 8, post-release.
 3. **Therefore v0.1.0 ships as a coding agent regardless.** The assistant arc *starts* at Stage 8.
 
-So nothing before Stage 11 gets rescoped. What the constraint does buy, right now, is the right to
+So nothing before the release (Stage 11b) gets rescoped. What the constraint does buy, right now, is the right to
 stop rejecting mechanisms for being assistant-shaped — and two concrete items that are cheap only
 while the code is small: **profiles** (Stage B) and the **global instruction file** (decided here,
 built with 6b). Both are path-and-prompt architecture, the same category of "cheap now, refactor
@@ -51,7 +52,7 @@ the *boundary* is not.
 
 ---
 
-# Status and execution order — updated 2026-08-06
+# Status and execution order — updated 2026-08-07
 
 **Stage numbers are identities, not an order.** They are referenced from outside this file (e.g.
 `.claude/loops/hosted-accounts-billing-gateway/PHASE-A-HANDOFF.md` gates Phase B on "Stage 7"), so
@@ -83,6 +84,14 @@ stdout — that is the payoff of choosing inline rendering over a full-screen al
 that it "can be pulled earlier than Stage 11 if the ergonomics start to hurt". It is not that they
 hurt; it is that the TUI is now on the critical path.
 
+**Superseded in part, 2026-08-07.** Stage 11 has since been **split**: 11a (the TUI) moved ahead of
+7a, 6 and 7b, while 11b (distribution) stayed put and is still the release gate. So the paragraph
+above is right that the TUI gates the release and wrong that the TUI is the tail of the order — it
+is now near the front. The trigger was not ergonomics either: it is that slash commands built before
+the TUI are built in a shape it cannot use. See Stage 11a's section. **Everywhere below, a bare
+"Stage 11" written before this date means the TUI where it is about how seri looks or renders, and
+means the release where it is about dates, users or shipping.**
+
 **New order:**
 
 1. **Abort/cancellation** — not a numbered stage; see Stage A below. **Done** — PR #23.
@@ -90,15 +99,21 @@ hurt; it is that the TUI is now on the critical path.
    because everything after Stage 5 assembles prompts.
 3. **Stage 5** — verification loop. **Done** (PR #41), as a check after `write_file` plus a
    near-miss report on edit failure — not the LSP-per-edit the line above used to describe.
-4. **Stage 7a** — the gateway half: OpenRouter breadth tier, Catwalk-style catalog, mid-session
+4. **Stage 11a** — the TUI. **Moved ahead of 7a, 6 and 7b (2026-08-07, user directive).** Every
+   slash command built before it is built in a shape the TUI cannot use and is paid for twice —
+   7a's mid-session model switching is the next one that would be. See Stage 11a's own section for
+   the measurement behind that, and for the shape new commands must take until it lands.
+5. **Stage 7a** — the gateway half: OpenRouter breadth tier, Catwalk-style catalog, mid-session
    model switching. **Moved ahead of Stage 6 (2026-08-06, user directive).** Unblocks billing
-   Phase B, the spend cap, and the portal's usage surface.
-5. **Stage 6** — subagents, now including the `curator` learning pass.
-6. **Stage 7b** — the routing-of-roles half: architect/editor split, oracle escalation. Stays
+   Phase B, the spend cap, and the portal's usage surface. Note that 11a moving ahead of it delays
+   those three by the length of the TUI — accepted deliberately, not overlooked.
+6. **Stage 6** — subagents, now including the `curator` learning pass.
+7. **Stage 7b** — the routing-of-roles half: architect/editor split, oracle escalation. Stays
    after Stage 6 because the oracle *is* a subagent — an isolated context with a restricted
    toolset, which is the machinery Stage 6 builds.
-7. **Stage 11** — TUI and distribution. **Release gate: v0.1.0 ships here.**
-8. **Stages 8, 9, 10** — daemon, OS sandbox, extensibility. Post-release; each adds capability to a
+8. **Stage 11b** — distribution. **Release gate: v0.1.0 ships here**, after 7b and with the
+   gateway, subagents and role routing in it. Splitting 11 moved the TUI, not the release.
+9. **Stages 8, 9, 10** — daemon, OS sandbox, extensibility. Post-release; each adds capability to a
    product that already exists, rather than being a condition for it existing.
 
 **Why 7a moved ahead of 6 (2026-08-06).** Two reasons, and the second is the one the plan already
@@ -114,7 +129,7 @@ half-argued against itself:
   is a routing target from birth rather than a retrofit — which is what Stage 7's own text always
   claimed it would be ("one more entry in a routing table that already exists").
 
-**Cost in release date: none.** 5, 6 and 7 all sit before the Stage 11 release gate either way;
+**Cost in release date: none.** 5, 6 and 7 all sit before the Stage 11b release gate either way;
 this reorders work inside that block without adding or removing any of it. What changes is what is
 finished earliest — and that is the provider layer, which three separate things are waiting on.
 
@@ -133,7 +148,7 @@ slots that already exist:
 The split is not arbitrary. The pieces landing before the release are the ones that are nearly free
 *given work already scheduled*; the ones landing after are the ones that would need infrastructure
 built early just to serve them. Note the honest limit on the early half: memory compounds with use
-and there are no users until Stage 11, so the curator ships **working but empty**. Its value is
+and there are no users until the release (Stage 11b), so the curator ships **working but empty**. Its value is
 zero on release day and accrues afterward. That is an acceptable trade only because the cost is
 marginal — if 6b starts growing into its own stage, it belongs after the release, not before it.
 
@@ -260,7 +275,7 @@ collision, and atomic write against a locked file.
 - Streaming stdout and readline — **no TUI components yet**
 
 Deferring the TUI is deliberate, and cheap because of the rendering model we chose (below):
-streaming stdout *is* the foundation the inline TUI builds on, not a throwaway. Stage 11 enriches
+streaming stdout *is* the foundation the inline TUI builds on, not a throwaway. Stage 11a enriches
 this output layer; it does not replace it.
 
 **Verify:** given a scratch repo and a real task, `seri` completes it end to end. Read-only mode
@@ -477,7 +492,14 @@ Progressive disclosure comes along with it: metadata-only listing, full body on 
 PreToolUse hook blocks a matching command deterministically. A curator-authored recipe is loadable,
 previewable, and visibly distinguishable from a human-authored one.
 
-## Stage 11 — TUI and distribution  ·  **MOVED: runs after Stage 7b, and gates the release**
+## Stage 11 — TUI and distribution  ·  **SPLIT (2026-08-07): 11a runs before Stage 7a; 11b still gates the release**
+
+The stage is split because its two halves now belong at opposite ends of the order. **11a (the TUI)
+moves ahead of 7a, 6 and 7b. 11b (distribution) stays where it was and remains the release gate —
+v0.1.0 still ships there, after 7b, with the gateway, subagents and role routing in it.** This
+changes the order, not the contents of v0.1.0.
+
+### Stage 11a — the TUI  ·  **MOVED: runs after Stage B, before Stage 7a**
 
 **TUI: Ink, rendering inline.** Not a full-screen alternate-buffer app. Two styles exist in this
 space and they are opposites — Claude Code renders **inline**, progressively into normal terminal
@@ -486,14 +508,42 @@ buffer (`\x1b[?1049h`), owning the display and repainting frames. We take the fo
 
 Consequence: this stage **enriches** Stage 2's streaming stdout rather than replacing it — status
 line, spinner, diff rendering, mode indicator, multiline input, all layered onto the same append-only
-output model. Full-screen would have meant rewriting that layer wholesale. Because the work is
-incremental, it can also be pulled earlier than Stage 11 if the ergonomics start to hurt.
+output model. Full-screen would have meant rewriting that layer wholesale.
 
-Distribution: install scripts (`curl | sh`, `irm | iex`), PATH handling, Homebrew tap, Scoop bucket,
-`seri update`.
+**Why it moved (2026-08-07, user directive).** The plan already said the TUI "can be pulled earlier
+than Stage 11 if the ergonomics start to hurt". That is not the reason. The reason is that **every
+slash command built before the TUI is built in a shape the TUI cannot use, and is therefore paid for
+twice.**
 
-**Verify:** clean-machine install succeeds on all three OSes without admin rights. Scrollback
-survives a session — prior output remains in terminal history after `seri` exits.
+Measured on the code as it stands, not predicted. `handleSlashCommand` (`apps/cli/src/cli.ts`) runs
+*before* `prepareSession` and `loadSession`s its own copy from disk; `cycleModeCommand` mutates that
+copy, calls `saveSession`, and prints with a bare `console.log`; the dispatch then returns an exit
+code and the process ends. Three properties, none of which survive an interactive session: a TUI
+holds the live session in memory (a command mutating a disk copy diverges from what the loop is
+using), a TUI renders rather than `console.log`s, and a TUI does not exit after a command. `/mode`,
+`/undo`, `/restore` and `/rewind` all have this shape today.
+
+That is sunk cost. What moved the stage is the *next* one: **Stage 7a includes mid-session model
+switching**, and "mid-session" presupposes an interactive session. Built before the TUI it becomes
+`seri --continue /model <id>` — the same load-mutate-save-exit shape, a second command to redo. The
+same applies to any command Stage 6 or 7b adds.
+
+The shape that does survive is already in the repo and is worth copying: the approval prompt
+(Stage 5's permission work, PR #45). `checkPermission` is a pure decision with no I/O, and
+`ApprovalPrompt` is an injected contract — the TUI supplies a different implementation of the same
+contract and nothing else changes. **Decision and presentation separated.** Until 11a lands, every
+new command must be built that way: a function that takes the live session and returns the new state
+plus something to say, with the caller deciding whether that goes to `console.log` or to an Ink
+component.
+
+**Verify:** scrollback survives a session — prior output remains in terminal history after `seri`
+exits. A slash command typed inside the TUI changes the live session, not a copy reloaded from disk.
+
+### Stage 11b — distribution  ·  **Release gate: v0.1.0 ships here, after Stage 7b**
+
+Install scripts (`curl | sh`, `irm | iex`), PATH handling, Homebrew tap, Scoop bucket, `seri update`.
+
+**Verify:** clean-machine install succeeds on all three OSes without admin rights.
 
 ---
 
