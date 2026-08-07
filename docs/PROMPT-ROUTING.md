@@ -72,3 +72,23 @@ Whether family detection keys off the model id string (what OpenCode does, and i
 providers that rename — OpenRouter's `meta-llama/llama-3.3-70b-instruct` versus Groq's
 `llama-3.3-70b-versatile`) or off a field in the catalog entry. The catalog is the better home; note
 that this makes the curated manifest load-bearing for correctness, not just for presentation.
+
+## Second thing the catalog has to carry: context window
+
+`SERI_MODEL` lets a user name any Groq model id, but `DEFAULT_CONTEXT_WINDOW_SIZE`
+(`apps/cli/src/loop/loop.ts`) is one hardcoded 131,072 for all of them, and nothing reconciles the
+two. Both the current default and the previous one happen to have that window, so nothing misbehaves
+today — but the escape hatch shipped without the number following it.
+
+Concretely, with `SERI_MODEL=gemma2-9b-it` (8,192 on Groq): compaction is triggered at half the
+configured window, so it waits for 65,536 tokens and never fires; once the conversation passes 8,192
+every `streamText` call returns a context-length 400, `runLoop` yields `error`, and the run exits 1.
+The session stays resumable and keeps failing the same way — though it will not have *pinned* that
+model, since seri only records a model a turn actually succeeded on (`prepareSession`).
+
+The fix belongs with the catalog rather than ahead of it: a per-model window read from the manifest
+entry, with the 131,072 constant demoted to the fallback for an id the catalog does not know. Doing
+it before then means hardcoding a second model table next to the one 7a is meant to introduce.
+Interim mitigation if this bites earlier: `runLoop` already accepts `opts.contextWindowSize`, so
+plumbing a `SERI_CONTEXT_WINDOW` override through `cli.ts` is a small change that does not require
+knowing every model's window.
