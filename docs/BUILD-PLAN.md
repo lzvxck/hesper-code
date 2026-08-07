@@ -377,6 +377,14 @@ Token cost per turn of running the curator is **measured** and reported, not ass
 
 ## Stage 7 — Routing and provider breadth  ·  **SPLIT: 7a runs before Stage 6, 7b after**
 
+**Read [`PROMPT-ROUTING.md`](./PROMPT-ROUTING.md) before building 7a.** Prompt-per-model-family is
+deferred here on purpose — it needs a catalog to route on, and 7a is what brings one. It also carries
+the measurement that makes it non-optional: the previous default model emits tool calls as plain text
+**6 runs in 11 even with tool guidance in the prompt**, where the current default is 20 for 20. Both
+references solve this by prompting families differently (OpenCode ships 14 prompt files; Hermes
+injects a tool-use enforcement block for GPT/Codex only), so the catalog entry, not the model-id
+string, is where family should be recorded.
+
 ### 7a — the gateway (before Stage 6)
 OpenRouter breadth tier; mid-session model switching with context preserved *[Crush #1]*;
 Catwalk-style catalog. Nothing here needs subagents, and three things are waiting on it: billing
