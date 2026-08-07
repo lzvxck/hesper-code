@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { PassThrough } from "node:stream";
 import type { ModelMessage } from "ai";
+import { buildSystemPrompt } from "../../src/agents/systemPrompt";
 import { checkpointStoreDir, createCheckpointer } from "../../src/checkpoint/checkpoint";
 import { isGitAvailable } from "../../src/checkpoint/shadowGit";
 import { run } from "../../src/cli";
 import type { LoopEvent, runLoop } from "../../src/loop/loop";
+import { getGroqModel } from "../../src/provider/groq";
 import { toolDefinitions } from "../../src/provider/tools";
 import { onSignalCancel } from "../../src/signals";
 import { loadSession, saveSession, type SessionState } from "../../src/session/session";
@@ -23,6 +25,8 @@ describe("run (task invocation)", () => {
   const originalHome = process.env.HOME;
   let sessionsDir: string;
   let tmpConfigRoot: string;
+  // Temp dirs a single test needs, torn down by the shared afterEach below.
+  const extraTmpDirs: string[] = [];
 
   function restoreEnv(key: string, original: string | undefined): void {
     if (original === undefined) delete process.env[key];
@@ -62,6 +66,10 @@ describe("run (task invocation)", () => {
     restoreEnv("HOME", originalHome);
     rmSync(sessionsDir, { recursive: true, force: true });
     rmSync(tmpConfigRoot, { recursive: true, force: true });
+    // Cleaned here rather than at the end of the test that made it, so a failing assertion leaks
+    // nothing either.
+    for (const dir of extraTmpDirs) rmSync(dir, { recursive: true, force: true });
+    extraTmpDirs.length = 0;
   });
 
   test("missing GROQ_API_KEY returns a non-zero exit code instead of crashing", async () => {
@@ -152,7 +160,163 @@ describe("run (task invocation)", () => {
     expect(capture()?.tools.write_file).not.toBe(toolDefinitions.write_file);
     expect(capture()?.messages.at(-1)).toEqual({ role: "user", content: "write hello.txt" });
     expect(capture()?.messages).toHaveLength(1);
-    expect(capture()?.system).toBe("You are seri, a coding agent.");
+    // The assembled prompt, not the bare identity line: with no AGENTS.md this used to be 29
+    // characters of identity and no tool guidance at all.
+    expect(capture()?.system).toBe(buildSystemPrompt(""));
+  });
+
+  // A turn the provider answered, which is what makes the model worth recording. The bare `done`
+  // the other tests use is a run that reached the model and got nothing back, and it deliberately
+  // records no model — see the two tests after this one.
+  const answeredTurn: LoopEvent[] = [
+    { type: "messages-updated", messages: [{ role: "assistant", content: "ok" }] },
+    { type: "done", reason: "no-tool-call" },
+  ];
+
+  // The model is resolved once and recorded on the session, which is what a later /model has to
+  // change. Without the record, `--continue` would silently re-resolve from the environment and
+  // undo the switch on the next turn.
+  test("records the resolved model on a new session and keeps a resumed session's own", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    // Captured rather than deleted afterwards: this box may legitimately have SERI_MODEL set, and
+    // reassigning a captured undefined would leave the literal string "undefined" behind.
+    const originalModel = process.env.SERI_MODEL;
+    process.env.SERI_MODEL = "model-from-env";
+    const asked: (string | undefined)[] = [];
+    const deps = {
+      runLoop: fakeRunLoop(answeredTurn).fake,
+      loadAgentsFile: () => "",
+      sessionsDir,
+      getGroqModel: (id: string) => {
+        asked.push(id);
+        return getGroqModel("openai/gpt-oss-120b");
+      },
+    };
+
+    try {
+      const fresh = await captureLogs(() => run(["a", "task"], deps));
+      expect(fresh.code).toBe(0);
+      const created = loadSession(readdirSync(sessionsDir)[0]!.replace(/\.json$/, ""), sessionsDir);
+      expect(created.model).toBe("model-from-env");
+      expect(asked).toEqual(["model-from-env"]);
+
+      const pinned: SessionState = { id: "pinned", cwd: ".", systemPrompt: "", permissionMode: "read-only", model: "model-on-session", messages: [] };
+      saveSession(pinned, sessionsDir);
+      const resumed = await captureLogs(() => run(["--resume", "pinned", "another", "task"], deps));
+      expect(resumed.code).toBe(0);
+      expect(asked.at(-1)).toBe("model-on-session");
+      expect(loadSession("pinned", sessionsDir).model).toBe("model-on-session");
+    } finally {
+      restoreEnv("SERI_MODEL", originalModel);
+    }
+  });
+
+  // The prompt is derived from this binary plus AGENTS.md, not carried as conversation state. A
+  // session created before src/agents/systemPrompt.ts existed has the 29-character identity line
+  // frozen into its JSON, and resuming it used to hand that straight to the model — no tool
+  // guidance, on exactly the sessions a user upgrading has.
+  test("a resumed session is run with the rebuilt prompt, not the one frozen into its file", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    // A cwd that is deliberately not the process's, to pin which one the AGENTS.md lookup uses.
+    const sessionCwd = mkdtempSync(join(tmpdir(), "seri-cli-test-cwd-"));
+    extraTmpDirs.push(sessionCwd);
+    const stale: SessionState = {
+      id: "stale-prompt",
+      cwd: sessionCwd,
+      systemPrompt: "You are seri, a coding agent.",
+      permissionMode: "read-only",
+      model: "model-on-session",
+      messages: [],
+    };
+    saveSession(stale, sessionsDir);
+
+    const askedFor: string[] = [];
+    const { fake, capture } = fakeRunLoop();
+    const { code } = await captureLogs(() =>
+      run(["--resume", "stale-prompt", "another", "task"], {
+        runLoop: fake,
+        loadAgentsFile: (dir: string) => {
+          askedFor.push(dir);
+          return "";
+        },
+        sessionsDir,
+      }),
+    );
+
+    expect(code).toBe(0);
+    expect(capture()?.system).toBe(buildSystemPrompt(""));
+    expect(askedFor).toEqual([sessionCwd]);
+  });
+
+  // The case `loaded.model ?? resolveModelId()` exists for, and the only one the two tests above
+  // do not reach: a session file written before `model` was a field. It must still load, and it
+  // must acquire a model rather than resuming with none.
+  test("a session saved without a model backfills one on resume and persists it", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const originalModel = process.env.SERI_MODEL;
+    process.env.SERI_MODEL = "model-from-env";
+    const asked: string[] = [];
+
+    try {
+      // Written the way a pre-`model` seri wrote it: the field is absent, not undefined.
+      const legacy = { id: "legacy", cwd: ".", systemPrompt: "", permissionMode: "read-only", messages: [] };
+      writeFileSync(join(sessionsDir, "legacy.json"), JSON.stringify(legacy));
+      expect("model" in JSON.parse(readFileSync(join(sessionsDir, "legacy.json"), "utf8"))).toBe(false);
+
+      const { code } = await captureLogs(() =>
+        run(["--resume", "legacy", "another", "task"], {
+          runLoop: fakeRunLoop(answeredTurn).fake,
+          loadAgentsFile: () => "",
+          sessionsDir,
+          getGroqModel: (id: string) => {
+            asked.push(id);
+            return getGroqModel("openai/gpt-oss-120b");
+          },
+        }),
+      );
+
+      expect(code).toBe(0);
+      expect(asked).toEqual(["model-from-env"]);
+      expect(loadSession("legacy", sessionsDir).model).toBe("model-from-env");
+    } finally {
+      restoreEnv("SERI_MODEL", originalModel);
+    }
+  });
+
+  // getGroqModel takes any string, so a typo only surfaces as a provider 404 once the run is under
+  // way. Recording it at creation would mint a session pinned to an id that cannot work, and
+  // `--continue` — the obvious retry — would re-read it and fail the same way with a corrected
+  // SERI_MODEL sitting right there in the environment. Nothing answered, so nothing is pinned.
+  test("a model that never produced a turn is not recorded, so a corrected SERI_MODEL takes effect", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const originalModel = process.env.SERI_MODEL;
+    process.env.SERI_MODEL = "openai/gpt-os-120b"; // the typo: one 's'
+    const asked: string[] = [];
+    const deps = (events: LoopEvent[]) => ({
+      runLoop: fakeRunLoop(events).fake,
+      loadAgentsFile: () => "",
+      sessionsDir,
+      getGroqModel: (id: string) => {
+        asked.push(id);
+        return getGroqModel("openai/gpt-oss-120b");
+      },
+    });
+
+    try {
+      await captureLogs(() => run(["a", "task"], deps([{ type: "error", error: "model_not_found" }])));
+      const id = readdirSync(sessionsDir)[0]!.replace(/\.json$/, "");
+      expect(asked).toEqual(["openai/gpt-os-120b"]);
+      expect("model" in JSON.parse(readFileSync(join(sessionsDir, `${id}.json`), "utf8"))).toBe(false);
+
+      // The correction the user makes next, and the resume that has to honour it.
+      process.env.SERI_MODEL = "openai/gpt-oss-120b";
+      const { code } = await captureLogs(() => run(["--resume", id, "again"], deps(answeredTurn)));
+      expect(code).toBe(0);
+      expect(asked.at(-1)).toBe("openai/gpt-oss-120b");
+      expect(loadSession(id, sessionsDir).model).toBe("openai/gpt-oss-120b");
+    } finally {
+      restoreEnv("SERI_MODEL", originalModel);
+    }
   });
 
   // cli.ts is the only thing that constructs the controller — runLoop is a library that is handed a
