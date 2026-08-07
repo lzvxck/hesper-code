@@ -67,7 +67,7 @@ Every REJECT below traces to one of these three, or to a documented failure in t
 
 | # | Feature | Verdict | Rationale |
 |---|---|---|---|
-| 1 | **LSP diagnostics fed back per edit** | **ADOPT** | The cheapest reliability win in the entire survey. The model learns it broke the build in the same turn it broke it, not three turns later. |
+| 1 | **LSP diagnostics fed back per edit** | **ADOPT — adapted at Stage 5 (2026-08-06): per *write*, and not via LSP** | The goal holds and is the cheapest reliability win in the survey: the model learns it broke the build in the same turn it broke it. Two things about *this* codebase moved the mechanism. **Per write, not per edit** — our `edit` is a pure string transform with no disk access, so a check there would report on the pre-edit file; OpenCode can do it per edit because theirs writes. **Not LSP** — we ship a `bun build --compile` binary with `typescript` as a devDependency and no LSP client anywhere, so an LSP-based version would ship inert on a machine with no language server installed (measured: the dev box had none). We run the project's own explicitly-configured check command instead, which is closer to Aider's `--lint-cmd` than to OpenCode. Cost is latency — a project check is seconds where an LSP round-trip is milliseconds, and that is the real price of this substitution. |
 | 2 | **9-strategy fuzzy replacer cascade** (SimpleReplacer → LineTrimmed → BlockAnchor → WhitespaceNormalized → IndentationFlexible → EscapeNormalized → TrimmedBoundary → ContextAware → MultiOccurrence) | **ADAPT — truncate to 3 tiers** | The top of this cascade is the right answer; the bottom is a documented corruption source (issues #1261, #2433 — BlockAnchorReplacer inserting duplicate brackets). We take **exact → line-trimmed → whitespace-normalized** and hard-fail past that. Rationale in Part II. |
 | 3 | **Client/server architecture** (`opencode serve` + SDK) — headless, web, desktop, IDE on one server | **ADOPT** | Decides our topology on day one. Every frontend is a client; the loop lives in exactly one place. Retrofitting this later is a rewrite. |
 | 4 | **Radical provider-agnosticism (75+ providers)** via plugin ProviderHook | **ADOPT** | This is our locked constraint #1, and OpenCode is the reference implementation. |
@@ -79,7 +79,7 @@ Every REJECT below traces to one of these three, or to a documented failure in t
 | # | Feature | Verdict | Rationale |
 |---|---|---|---|
 | 1 | **Architect/editor two-model split** — strong reasoning model plans, cheap model emits the diff | **ADOPT** | SOTA on Aider's own edit benchmarks, and *unusually natural for us*: provider-agnosticism turns this from an architecture into a routing decision. Cost is two API calls, which the cheap-editor leg largely pays back. |
-| 2 | **Reflection loop on edit failure** — re-prompt with the failed block **plus the actual current file content** | **ADOPT** | This is the correct failure path once we truncate the fuzzy cascade. Fuzzy matching guesses what the model meant; reflection *asks*. Strictly safer, one round-trip slower. |
+| 2 | **Reflection loop on edit failure** — re-prompt with the failed block **plus the actual current file content** | **ADAPT — corrected at Stage 5 (2026-08-06): a near-miss report, not the file content** | The goal is right and this is the correct failure path once the fuzzy cascade is truncated: fuzzy matching guesses what the model meant, reflection *asks*. But the stated mechanism does not transfer. Aider's version works because Aider applies edits to files on disk, where the model's picture of a file can be stale. Ours cannot: `edit` has no `path` to read, and the content that failed to match **arrived in the model's own tool call**, so handing it back conveys nothing it does not already have. What transfers is the intent — tell the model what is actually there. So the failure returns the closest candidate line, its real text, and the text that was searched for. |
 | 3 | **Per-format edit strategy matched to model** (`whole` / `diff` / `diff-fenced` / `udiff` / `udiff-simple` / `patch`) | **DEFER** | Backed by real evidence (arXiv 2510.12487 Diff-XYZ: search/replace best overall, modified udiff best for smaller models). v1 ships search/replace only; the format becomes a per-model config field once we have models where it measurably matters. |
 | 4 | **Granular auto-commit per edit** | **ADAPT** | Free undo is the right goal; "noisy history" is a real cost the survey flags. Our version commits to a **shadow checkpoint ref**, not the user's branch. Same recoverability, zero pollution. |
 | 5 | **tree-sitter repo map to a token budget** | **DEFER to L2** | Grep-first is the confirmed convergence. Add when grep demonstrably fails on a large monorepo, not before. |
@@ -322,9 +322,17 @@ the harness never translates commands between them (Part IV). This is what Claud
 2. Tier 1: line-trimmed *[OpenCode #2, truncated]*
 3. Tier 2: whitespace-normalized *[OpenCode #2, truncated]*
 4. Ambiguity + disproportionate-match guards at every tier *[OpenCode #6]*
-5. On total failure: reflect — re-prompt with the failed block + actual current file content *[Aider #2]*
-6. After every successful edit: run LSP diagnostics, feed errors back *[OpenCode #1]*
-7. Every edit commits to a shadow checkpoint ref *[Aider #4 adapted / Cline #2]*
+5. On total failure: a **near-miss report** — the closest candidate line, what it actually says, and
+   what was searched for *[Aider #2, adapted]*. Not "the actual current file content", which this
+   pipeline cannot produce: `edit` takes the content as an argument and has no `path`, so at the
+   failure site there is no file to read, and the content that failed to match came from the model's
+   own tool call. Aider's version is load-bearing only because Aider writes to disk.
+6. After every successful **`write_file`** — not every `edit` — run the project's configured check
+   command and return its diagnostics on that tool result *[OpenCode #1, adapted]*. Same reason as
+   above, from the other side: when `edit` returns, the disk is unchanged, so a check there would
+   report on the pre-edit file. Item 7 already draws this line for checkpoints.
+7. Every **filesystem-mutating** call commits to a shadow checkpoint ref *[Aider #4 adapted /
+   Cline #2]* — which is `write_file`/`bash`/`powershell`, deliberately not `edit`.
 
 ### Layer 3 — Comprehension
 ripgrep + glob, lazy, no eager index, preference stated in the system prompt.
