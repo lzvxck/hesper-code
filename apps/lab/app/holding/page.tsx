@@ -1,7 +1,5 @@
 import { ComingSoon } from "@seri/ui";
 
-const REPO_URL = "https://github.com/lzvxck/seri-agent";
-
 /*
  * The page proxy.ts rewrites `/` to while SERI_COMING_SOON is set. It reads no environment
  * variable, and that is load-bearing rather than incidental: this route is statically
@@ -21,7 +19,6 @@ export default function Holding() {
     <ComingSoon
       wordmark="Seriora Research"
       line="An independent research lab working on agents that learn from their own work."
-      repoUrl={REPO_URL}
     />
   );
 }

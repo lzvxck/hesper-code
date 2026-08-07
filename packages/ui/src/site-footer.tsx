@@ -1,20 +1,12 @@
-import { GitHubMark } from "./github-mark";
-
 /*
- * The link's text is the repo slug, derived from `repoUrl` rather than passed separately, so
- * the slug is written once per site instead of once as a URL and again as a display string
- * that can drift out of sync with it.
- *
  * `builtBy` credits the lab that builds the site's subject. It is optional because the lab's
  * own site would otherwise credit itself.
  */
 export function SiteFooter({
   wordmark,
-  repoUrl,
   builtBy,
 }: {
   wordmark: string;
-  repoUrl: string;
   builtBy?: { label: string; href: string };
 }) {
   return (
@@ -31,10 +23,6 @@ export function SiteFooter({
             </span>
           ) : null}
         </span>
-        <a href={repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-4 text-ink-subtle hover:text-ink">
-          <GitHubMark />
-          {new URL(repoUrl).pathname.slice(1)}
-        </a>
       </div>
     </footer>
   );

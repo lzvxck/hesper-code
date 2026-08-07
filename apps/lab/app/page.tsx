@@ -2,7 +2,6 @@ import { Reveal, SiteFooter, SiteNav, rowDelay } from "@seri/ui";
 
 import { ProductList, type Product } from "./ProductList";
 
-const REPO_URL = "https://github.com/lzvxck/seri-agent";
 const AGENT_URL = "https://seri-agent.seriora.ai";
 const PORTAL_URL = "https://portal.seriora.ai";
 
@@ -53,7 +52,6 @@ export default function Home() {
     <>
       <SiteNav
         wordmark="Seriora Research"
-        repoUrl={REPO_URL}
         links={[
           { label: "Agent", href: AGENT_URL },
           { label: "Portal", href: PORTAL_URL },
@@ -167,7 +165,7 @@ export default function Home() {
         </section>
       </main>
 
-      <SiteFooter wordmark="Seriora Research" repoUrl={REPO_URL} />
+      <SiteFooter wordmark="Seriora Research" />
     </>
   );
 }

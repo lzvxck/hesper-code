@@ -4,8 +4,6 @@ import type { ReactNode } from "react";
 import { endSession } from "@/lib/actions";
 import { BILLING, PLANS, USAGE } from "@/lib/routes";
 
-const REPO_URL = "https://github.com/lzvxck/seri-agent";
-
 /*
  * The frame every signed-in page shares: who you are and how to leave at the top, the page
  * itself below. A module rather than a local in page.tsx so /billing and /usage render inside
@@ -28,7 +26,6 @@ export function Shell({ email, current, children }: ShellProps) {
     <>
       <SiteNav
         wordmark="seri"
-        repoUrl={REPO_URL}
         current={CURRENT_HREF[current]}
         links={[
           { label: "Plans", href: PLANS },
@@ -52,11 +49,7 @@ export function Shell({ email, current, children }: ShellProps) {
         </section>
       </main>
 
-      <SiteFooter
-        wordmark="seri"
-        repoUrl={REPO_URL}
-        builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
-      />
+      <SiteFooter wordmark="seri" builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }} />
     </>
   );
 }

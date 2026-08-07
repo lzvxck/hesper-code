@@ -1,11 +1,9 @@
 import { Button } from "./button";
-import { GitHubMark } from "./github-mark";
 import { SerioraMark } from "./seriora-mark";
 
 /*
  * The wordmark links to `#top`, so the page that renders this must carry that id.
- * `links` are the site-specific entries; the GitHub link is common to both sites and
- * comes from `repoUrl`.
+ * `links` are the site-specific entries.
  *
  * `current` is optional and additive: apps/web and apps/lab pass nothing, so every link
  * renders `ghost` exactly as before. A caller that does pass it gets the matching link
@@ -13,12 +11,10 @@ import { SerioraMark } from "./seriora-mark";
  */
 export function SiteNav({
   wordmark,
-  repoUrl,
   links,
   current,
 }: {
   wordmark: string;
-  repoUrl: string;
   links: { label: string; href: string }[];
   current?: string;
 }) {
@@ -35,12 +31,6 @@ export function SiteNav({
               <a href={link.href}>{link.label}</a>
             </Button>
           ))}
-          <Button asChild variant="ghost" size="sm">
-            <a href={repoUrl} target="_blank" rel="noreferrer">
-              <GitHubMark />
-              GitHub
-            </a>
-          </Button>
         </nav>
       </div>
     </header>

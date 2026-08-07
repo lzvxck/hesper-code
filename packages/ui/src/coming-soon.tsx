@@ -30,12 +30,10 @@ import { SiteFooter } from "./site-footer";
 export function ComingSoon({
   wordmark,
   line,
-  repoUrl,
   builtBy,
 }: {
   wordmark: string;
   line: string;
-  repoUrl: string;
   builtBy?: { label: string; href: string };
 }) {
   return (
@@ -50,7 +48,7 @@ export function ComingSoon({
         </h1>
         <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">{line}</p>
       </main>
-      <SiteFooter wordmark={wordmark} repoUrl={repoUrl} builtBy={builtBy} />
+      <SiteFooter wordmark={wordmark} builtBy={builtBy} />
     </>
   );
 }

@@ -17,8 +17,8 @@ mock.module("@/lib/actions", () => ({ endSession: async () => {} }));
 const { Shell } = await import("@/app/Shell");
 
 /*
- * Only the in-app destinations: the wordmark anchor and the GitHub links are absolute or
- * in-page and belong to the chrome, not to the control row.
+ * Only the in-app destinations: the wordmark anchor is in-page and belongs to the chrome, not
+ * to the control row.
  */
 const inAppLinks = (current: ShellProps["current"]) =>
   renderToStaticMarkup(
