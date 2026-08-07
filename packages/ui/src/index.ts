@@ -1,5 +1,6 @@
 export { Button, buttonVariants } from "./button";
 export { ComingSoon } from "./coming-soon";
+export { NightField } from "./night-field";
 export { Reveal } from "./reveal";
 export { RevealNoScript } from "./reveal-noscript";
 export { rowDelay } from "./row-delay";

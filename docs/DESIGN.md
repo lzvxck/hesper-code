@@ -85,6 +85,14 @@ Generous use of negative space and restrained layering (card shadows are nearly 
 
 **Rationale:** The two-color system eliminates ambiguity. Every element is either dark (content, interface) or light (background). Accent colors are absent from the measured tokens, suggesting the site relies on interaction states, opacity shifts, or component-level color for secondary messaging. This restraint amplifies impact when color *is* used (e.g., a CTA button or link).
 
+### The inverse surface
+
+The two colors are a pair, not a hierarchy: the same system read the other way round gives ink as the ground and cream as the content. `globals.css` carries the tokens for it — `--on-ink`, `--on-ink-subtle`, `--on-ink-hairline` — and `[data-surface="ink"]` flips the focus ring so it never disappears against a `#141413` fill.
+
+**Where it is used, and only there: the holding page.** Every real page in web, lab and portal is the light reading; `<ComingSoon>` is the single dark screen in the product, and that is deliberate rather than incidental. A holding page has no navigation, no next step and no returning visitors — it is the one surface whose entire job is a single first impression, so it is the one place where being its own moment costs nothing downstream. `body:has(.holding)` carries the ink onto the body so overscroll does not reveal cream behind it.
+
+Adding a second dark screen is not a small decision and should not be made by analogy to this one. If a real page ever needs the inverse surface, the question to answer first is what happens at the boundary — a visitor moving between a dark page and a light one inside the same product reads it as two products.
+
 ## 3. Typography
 
 **Font Families:**
@@ -165,3 +173,9 @@ Similarly excellent for inverse layouts.
 - **Touch Target Size:** All interactive elements (buttons, links, form inputs) must be at least 44×44px (CSS pixels) to meet WCAG 2.1 Level AAA. Given the compact 12px body text and 58px headings, careful padding/height design is critical; a 12px link in a tight card may require 28–32px of vertical padding to reach the 44px threshold.
 - **Focus Indicator:** All keyboard-navigable elements must have a visible focus state—recommend a 2px solid or outline stroke in the primary color (#141413) with a 2px offset, ensuring it's not obscured by shadows or borders. On dark backgrounds, use #ffffff for contrast.
 - **Motion:** Users who prefer reduced motion (prefers-reduced-motion media query) should receive instant or near-instant transitions (50–100ms) instead of 200–800ms animations. Ensure no parallax or auto-playing video without pause controls.
+
+  **Collapsing duration alone is not enough, and the failure is not obvious.** The blanket rule in `globals.css` sets `animation-duration: 0.01ms` but leaves `animation-delay` untouched — so a staged entrance keeps its full schedule and plays as a sequence of hard pops over seconds, which is worse than either extreme. A reduced-motion path has to drop the stagger too, or it is not near-instant in any sense a visitor experiences.
+
+  **Reduce means less movement, not less design.** What the preference guards against is vestibular triggers: translation, scale, parallax, looping motion. Opacity is not one of them, and a short cross-fade is the correct substitute for a movement-based entrance — a hard cut is not. `<ComingSoon>` is the worked example: under `reduce` every element fades in place at 100ms on a stagger finishing in ~400ms, and the idle loops are removed outright.
+
+  **Verify it by measuring, not by looking.** Headless Chrome reports `prefers-reduced-motion: reduce` by default, so a screenshot run that does not emulate the media feature explicitly captures the collapsed path while appearing to capture the normal one. Read `document.getAnimations()[i].effect.getTiming().duration` under both values rather than trusting an image.

@@ -1,7 +1,9 @@
+import { NightField } from "./night-field";
+
 /*
  * The whole body of the holding page the three sites serve while the agent is not available:
- * one wordmark, one heading, one line, centered, no footer and no SiteNav — there is nothing to
- * navigate to and nowhere else to go.
+ * one mark, one wordmark, one heading, one line, centered on a dark surface, no footer and no
+ * SiteNav — there is nothing to navigate to and nowhere else to go.
  *
  * It deliberately does NOT use `Reveal`, and that is a correctness constraint rather than a
  * style preference. `reveal.tsx` initialises `shown` to false, so the server renders
@@ -13,24 +15,80 @@
  * the worst available failure. apps/portal/tests/holding.test.ts asserts the rendered markup
  * carries no data-reveal attribute, so this cannot be undone silently.
  *
+ * The entrance animation added here does not reopen that hole, and the distinction is worth
+ * stating because it looks like the same thing. A CSS animation starts when the stylesheet is
+ * PARSED, with no JS involved, so an `opacity: 0` inside a @keyframes with
+ * `animation-fill-mode: both` is not a hidden state waiting for someone to come and undo it —
+ * it plays regardless. What broke under `Reveal` was that the initial state depended on React
+ * mounting. Nothing below depends on anything mounting. globals.css's existing
+ * prefers-reduced-motion block collapses these to 0.01ms, which with fill-mode `both` lands on
+ * the end state immediately rather than leaving anything invisible.
+ *
+ * <NightField> is the one client component, and it is purely additive: an aria-hidden <canvas>
+ * behind the text that owns no content. If it never mounts, what remains is the ink background
+ * and the whole page.
+ *
  * Being a plain sync server component with no "use client" has a second payoff: the app copy
  * suites can put it through `renderToStaticMarkup`, which throws outright on an async server
  * component and renders nothing for a closed client subtree.
  *
- * `min-h-[70svh]` centers the three lines in the viewport instead of floating them at the top
- * on a tall screen.
+ * `min-h-[100svh]` lets the field fill the viewport instead of floating the three lines in a
+ * band of ink on a tall screen.
+ */
+/*
+ * `wordmark` names the ORGANISATION, not the product, and that became load-bearing when
+ * this page grew a logo. Before, the wordmark stood alone as a site label and "seri" read
+ * correctly on web. Under the Seriora mark it reads as the mark's own name, which is wrong
+ * — seri is the agent, Seriora is the lab that makes it. All three sites therefore lead
+ * with Seriora (lab and portal already did), and a product name belongs in `line`.
  */
 export function ComingSoon({ wordmark, line }: { wordmark: string; line: string }) {
   return (
     <main
       id="top"
-      className="mx-auto flex min-h-[70svh] max-w-[1080px] flex-col items-center justify-center px-11 py-29 text-center md:px-16 md:py-34"
+      data-surface="ink"
+      className="holding relative isolate flex min-h-[100svh] flex-col items-center justify-center overflow-hidden bg-ink px-11 py-29 text-center text-on-ink md:px-16 md:py-34"
     >
-      <p className="mb-11 font-mono text-ink-subtle uppercase tracking-[1px]">{wordmark}</p>
-      <h1 className="max-w-[16ch] text-[38px] leading-[1.1] font-bold tracking-[-1px] md:text-display">
-        Coming soon
-      </h1>
-      <p className="mt-11 max-w-[62ch] text-ink-subtle md:mt-16 md:text-[16px]/[1.4]">{line}</p>
+      <NightField />
+
+      <div className="relative z-10 flex flex-col items-center">
+        {/*
+         * The mark is inlined rather than taken from <SerioraMark> because the sunrise needs
+         * its two paths to move independently: the sun rides up from behind the horizon, and
+         * a clipPath at y=122 hides it until it clears the line. That cut is not a new number
+         * — it is exactly where seriora-mark.tsx's own arc terminates, which is why the sun
+         * appears to emerge from the horizon rather than from an arbitrary crop.
+         */}
+        <div className="holding-mark relative mb-20">
+          <svg
+            viewBox="0 0 622 128"
+            fill="currentColor"
+            aria-hidden="true"
+            className="holding-mark-svg relative block h-auto w-[148px] text-canvas md:w-[190px]"
+          >
+            <defs>
+              <clipPath id="holding-horizon-clip">
+                <rect x="0" y="0" width="622" height="122" />
+              </clipPath>
+            </defs>
+            <g clipPath="url(#holding-horizon-clip)">
+              <path className="holding-sun" d="M410 122A102 102 0 1 0 210 122Z" />
+            </g>
+            <path className="holding-horizon" d="M0 121Q310 115 622 121Q310 128 0 121Z" />
+          </svg>
+        </div>
+
+        <p className="holding-wordmark mb-13 font-mono text-on-ink-subtle uppercase tracking-[3px]">
+          {wordmark}
+        </p>
+        <h1 className="holding-headline max-w-[16ch] text-[40px] leading-[1.1] font-bold tracking-[-1.2px] md:text-[68px] md:tracking-[-2px]">
+          Coming soon
+        </h1>
+        <p className="holding-line mt-13 max-w-[52ch] text-on-ink-subtle md:mt-16 md:text-[16px]/[1.5]">
+          {line}
+        </p>
+        <div className="holding-rule mt-23 h-px w-[min(320px,60%)]" />
+      </div>
     </main>
   );
 }
