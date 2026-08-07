@@ -92,3 +92,113 @@ it before then means hardcoding a second model table next to the one 7a is meant
 Interim mitigation if this bites earlier: `runLoop` already accepts `opts.contextWindowSize`, so
 plumbing a `SERI_CONTEXT_WINDOW` override through `cli.ts` is a small change that does not require
 knowing every model's window.
+
+## Third thing the catalog has to carry: rate-limit class, and what the router does about it
+
+Measured 2026-08-07, during the `tui-ready-permissions` loop, on a real Groq account. A day of
+manual acceptance runs exhausted the daily token allowance, and what the user saw was this:
+
+```
+AI_RetryError: Failed after 3 attempts. Last error: AI_APICallError: Rate limit reached for
+model `openai/gpt-oss-120b` in organization `org_…` service tier `on_demand` on tokens per day
+(TPD): Limit 200000, Used 199836, Requested 1458. Please try again in 9m19.008s. Need more
+tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing
+```
+
+Every useful fact is in there — how much was used, when it clears, what to do — buried in a
+provider string never written for a human. And the three retries before it were wasted: the SDK
+retried a limit that resets on a **daily** boundary.
+
+### The distinction that matters is not free vs paid
+
+It is tempting to file this under "free tier problem". It is not. Every provider rate-limits paid
+accounts too; paying changes the ceiling and the window, not their existence. Two classes behave
+oppositely, and the harness currently cannot tell them apart:
+
+| class | cause | clears in | retrying is |
+|---|---|---|---|
+| RPM / TPM (per minute) | burstiness | seconds | correct — the user should never see it |
+| TPD / quota / credits exhausted | volume, or a spend cap | hours, or only by paying | pointless, and it delays the real message by three calls |
+
+An agent is unusually good at hitting the *first* one even on a well-funded account, because it
+resends the whole conversation every turn — per-minute consumption grows with session length. So
+this gets worse for a paying user with a long session, not better.
+
+Today `loop.ts` treats both identically: `MAX_RETRIES = 2` (`compaction.ts`, the SDK default
+restated), three attempts, then the raw `AI_RetryError` above.
+
+### What to do, and when
+
+**Before the catalog, and provider-independent.** Classify the failure instead of retrying blindly.
+The AI SDK surfaces `APICallError` with response headers; `retry-after` is the signal. If the wait
+exceeds a threshold, stop retrying and report a sentence rather than the provider's string — which
+model, that it is a quota rather than a fault, roughly when it clears, and that `SERI_MODEL` points
+somewhere else. This is a change to `loop.ts`'s error path plus a line in `cli/output.ts`, and it
+needs no model metadata at all.
+
+**With the catalog, at 7a.** `ARCHITECTURE.md`'s breadth tier is an OpenRouter-style router behind
+one OpenAI-compatible endpoint, and what it buys *for this problem specifically* is upstream
+fallback: a 429 on one provider can route to another automatically, turning a run-ending error into
+a latency blip. That is the single most valuable property of the breadth tier for rate limits, and
+it is worth stating because the tier was adopted for model breadth, not for this.
+
+It is not a cure. A router has its own limits — free model variants are throttled hard, paid usage
+is credit-based with a ceiling that scales with balance — so it changes *who* limits you and gives
+an automatic way out, rather than removing the limit.
+
+**Do not hardcode any of the numbers in this section.** Provider tiers, limits and pricing move
+faster than this repo does; the ones quoted above are one measurement on one account on one day.
+This is the same maintenance treadmill `ARCHITECTURE.md` adopts the Catwalk-style auto-refreshed
+catalog to survive, and rate-limit class belongs in that manifest entry beside the context window
+recorded in the section above — same structure, same argument, same reason not to build a second
+model table ahead of it.
+
+### The per-minute ceiling is a second, separate mismatch — and it is the account's, not the model's
+
+The context-window gap recorded two sections above is "the model has a different window". This one
+is "**your account cannot send that window even though the model accepts it**", and it bites far
+earlier.
+
+Measured 2026-08-07 on the same account. Groq's published Free-plan limits for
+`openai/gpt-oss-120b`:
+
+| dimension | Free plan |
+|---|---|
+| RPM — requests/min | 30 |
+| RPD — requests/day | 1,000 |
+| **TPM — tokens/min** | **8,000** |
+| TPD — tokens/day | 200,000 |
+
+The TPD figure matches the quota error verbatim, which is what identifies the plan.
+
+Now put TPM beside seri's own numbers. `DEFAULT_CONTEXT_WINDOW_SIZE` is 131,072 and compaction
+fires at half of it — **65,536 tokens**. The account's per-minute ceiling is **8,000**. So seri lets
+a conversation grow to roughly **eight times** what the account can send in a minute, and every turn
+past ~8k tokens is already colliding with TPM long before compaction has any reason to run.
+
+This is not theoretical: the `↻ rate-limited or unavailable; retrying` lines scattered through
+almost every run during the `tui-ready-permissions` loop were this, not the daily cap. They were
+read as provider flakiness for most of a day.
+
+An agent is the worst possible shape for a per-minute token limit, because it resends the entire
+conversation every turn — consumption per minute grows with session length even when the user is
+doing nothing unusual. A chat client sending one message never notices an 8,000 TPM ceiling; an
+agent notices it on turn three.
+
+**What that implies for the catalog, and where it differs from the two items above.** Context window
+is a property of the *model* and belongs in the manifest entry. TPM/TPD are properties of the
+*account* — the same model on a different plan has different numbers, and no catalog can know them.
+They arrive on every response in the `x-ratelimit-*` headers, which seri currently discards.
+
+So the fix splits:
+
+- **Read the headers.** `x-ratelimit-remaining-tokens` and the reset values are per-account truth,
+  free, and already on the wire. They are what makes "you have 1,400 tokens left this minute"
+  sayable instead of a bare retry.
+- **Let the effective compaction threshold be bounded by what the account can actually send**, not
+  only by the model's window. A 65,536-token trigger on an 8,000 TPM account is a threshold that can
+  never usefully fire before the ceiling does.
+
+Neither needs the catalog, and the first needs nothing but the response object. Sequencing note: this
+is a stronger argument for doing the error-classification work above sooner, since both live in the
+same place — the provider response nobody currently reads.

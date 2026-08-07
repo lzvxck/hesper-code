@@ -22,6 +22,7 @@ import {
 import { projectRoot } from "./checkpoint/shadowGit";
 import { withCheckpoints } from "./checkpoint/wrapTools";
 import {
+  escapeControlChars,
   printEvent,
   printRecovery,
   printUndoPlan,
@@ -34,8 +35,8 @@ import {
 import { configCommand as configCommandReal } from "./config/commands";
 import { loadVerifyConfig } from "./config/config";
 import { getConfigDir } from "./config/paths";
-import { cycleMode } from "./gate/gate";
-import { type ApprovalPrompt, type LoopEvent, runLoop as runLoopReal } from "./loop/loop";
+import { cycleMode, type PermissionMode } from "./gate/gate";
+import { type ApprovalAnswer, type ApprovalPrompt, type LoopEvent, runLoop as runLoopReal } from "./loop/loop";
 import { getGroqModel as getGroqModelReal, resolveModelId } from "./provider/groq";
 import { toolDefinitions } from "./provider/tools";
 import { findMostRecentSession, loadSession, saveSession, type SessionState } from "./session/session";
@@ -245,11 +246,15 @@ function loadOrCreateSession(
       id: randomUUID(),
       cwd: process.cwd(),
       systemPrompt: buildSystemPrompt(loadAgentsFileFn(process.cwd())),
-      // Read-only is the safest default for a brand-new session: nothing in docs/BUILD-PLAN.md /
-      // docs/ARCHITECTURE.md states an explicit default, so this errs on the side of never
-      // writing/executing without the user opting in via --resume onto an existing session
-      // or cycling the mode themselves.
-      permissionMode: "read-only",
+      // approve-each, not read-only: on native Windows the OS sandbox is not enforced
+      // (docs/ARCHITECTURE.md:417), so the permission gate is the whole Base layer and a default
+      // that does not ask is a default that writes unattended. read-only was tried and measured —
+      // a fresh session given a write task was blocked repeatedly and produced nothing (step 0 of
+      // the tui-ready-permissions loop: 5 denials, done: no-tool-call, no file created). This
+      // reverses docs/ARCHITECTURE.md:93's rejection of "approval for every edit" as a default;
+      // the per-run allowlist ("always allow this tool", below) is what keeps this from being
+      // that rejected every-call mode.
+      permissionMode: "approve-each",
       model: resolveModelId(),
       messages: [],
     },
@@ -279,32 +284,120 @@ function loadOrCreateSession(
 // SIGINT again.
 //
 // The onAbort registration is the other direction: a cancel that originated elsewhere while the
-// prompt is up. Closing the interface and resolving false is what unparks the turn. The loop tells
-// that false apart from a typed "n" by re-checking the signal, so the row the model sees says the
+// prompt is up. Closing the interface and resolving "no" is what unparks the turn. The loop tells
+// that "no" apart from a typed "n" by re-checking the signal, so the row the model sees says the
 // call was cancelled rather than denied. A signal that is already aborted returns before the
 // interface is opened — onAbort would catch that case too, that being the whole point of it, but a
 // turn that has already been cancelled should not touch stdin to find out.
+
+// write_file's input carries the whole file body, so an uncapped JSON.stringify can render
+// hundreds of lines on one prompt line and scroll the question itself out of scrollback before the
+// user can even see it, let alone answer it. Capped, not omitted: the prompt's job is still to
+// show what is about to happen, just not all of it when "all of it" is unreadable anyway.
+const MAX_PROMPT_ARGS_LENGTH = 200;
+function truncateArgsDisplay(args: unknown): string {
+  // JSON.stringify(undefined) returns `undefined` (the value, not a string), and `.length` on
+  // that throws inside this Promise executor — which rejects approvalPrompt, which nothing in
+  // runLoop wraps, so it would escape driveLoop as an unhandled rejection, skipping printUsage and
+  // the exit-code logic entirely. Unreachable through cli.ts today (call.input is provider-parsed
+  // JSON, never bare undefined), but ApprovalPrompt is an exported seam Stage 11's Ink prompt
+  // re-implements against, and `args: unknown` promises nothing about what a future caller passes.
+  const json = JSON.stringify(args) ?? "undefined";
+  return json.length > MAX_PROMPT_ARGS_LENGTH ? `${json.slice(0, MAX_PROMPT_ARGS_LENGTH)}…` : json;
+}
+
+// The allowlist is keyed on tool name alone (gate.ts), and tool granularity on a shell is
+// meaningless: approving one `bash` call because it looked like `ls -la` would silently
+// auto-approve `rm -rf ./src` under the same grant, since nothing about WHAT the command does
+// factors into the key. Claude Code scopes always-allow to a command PREFIX
+// (`Bash(npm run test *)`) precisely to avoid this; that is a real feature, scoped to a later PR
+// (PERMISSIONS-ALLOWLIST-DESIGN.md). This is the one-rule version that ships now: the two shells
+// never offer "always" at all, so the allowlist can never hold "bash" or "powershell" — only
+// write_file and edit, where one call's shape says everything about what it will do.
+const SHELL_TOOL_NAMES = new Set(["bash", "powershell"]);
+
+// Whichever of the two is still a terminal. stdout carries the model's own output and is
+// routinely piped (`seri "…" | tee log`) — see printWarning's own comment in cli/output.ts, the
+// same rule — which is why this used to be stderr unconditionally. But stderr redirects just as
+// often (`seri "…" 2> errors.log`), and moving to stderr traded one broken pipe for another: the
+// question lands in the log file and the terminal goes blank while the run blocks on stdin.
+// Checking stderr first, then stdout, then falling back to stderr covers both redirection shapes
+// (whichever stream is NOT redirected is where the question renders) and reproduces today's
+// behaviour when neither is a terminal, where it makes no difference which is picked.
+export function chooseInterfaceOutput(): NodeJS.WritableStream {
+  return process.stderr.isTTY ? process.stderr : process.stdout.isTTY ? process.stdout : process.stderr;
+}
+
 function makeApprovalPrompt(
-  openInterface: () => Interface = () => createInterface({ input: process.stdin, output: process.stdout }),
+  // Reads only from `input`, unchanged.
+  openInterface: () => Interface = () => createInterface({ input: process.stdin, output: chooseInterfaceOutput() }),
 ): ApprovalPrompt {
+  // Once true, no further prompt in this run touches stdin at all. `process.stdin` is a single
+  // shared stream that only ever emits 'end' once: the FIRST prompt's Interface is what actually
+  // starts consuming it and discovers EOF, so its 'close' listener is the only one that will ever
+  // fire. A second Interface opened on the same, already-ended stream attaches its own listeners
+  // AFTER 'end' already happened — EventEmitters do not replay past events to a late listener — so
+  // its 'close' never fires and its question's callback never runs: the promise hangs forever.
+  // Measured live: prompt 1 resolves "no" correctly, prompts 2 and beyond hang. Denying every
+  // prompt after the first EOF, without opening a doomed second Interface to rediscover that, is
+  // Hermes' own rule for this applied at the point where it costs nothing extra to check first —
+  // "on timeout or error, the approval bridge denies the request." Deliberately not a TTY check:
+  // that would also kill `seri "explain this repo" | tee log`, a non-interactive run that only
+  // reads and needs no approval at all; this only engages once stdin has actually ended.
+  let ended = false;
+
   return (toolName, args, signal) =>
-    new Promise<boolean>((resolve) => {
-      if (signal?.aborted === true) {
-        resolve(false);
+    new Promise<ApprovalAnswer>((resolve) => {
+      if (signal?.aborted === true || ended) {
+        resolve("no");
         return;
       }
+      const offersAlways = !SHELL_TOOL_NAMES.has(toolName);
+      let answered = false;
       const rl = openInterface();
       const abort = onAbort(signal, () => {
+        answered = true;
         rl.close();
-        resolve(false);
+        resolve("no");
+      });
+      rl.on("close", () => {
+        if (!answered) {
+          answered = true;
+          // readline's tty path also calls close() on Ctrl-D at an empty line — verified directly
+          // against Node's readline implementation: this fires 'close' WITHOUT the underlying
+          // stream ending (input.readableEnded stays false). Latching `ended` on any 'close' would
+          // treat "stop asking about THIS one" (Ctrl-D) as "stop asking for the rest of the run"
+          // (real EOF) — the user hits Ctrl-D once and sees every later prompt silently deny
+          // itself with nothing rendered, until repeated-denials kills the run. Latch only when
+          // the input actually ended, so a fresh Interface after a Ctrl-D still works.
+          if (inputHasEnded(rl)) ended = true;
+          abort.dispose();
+          resolve("no");
+        }
       });
       rl.on("SIGINT", () => deliverSignal("SIGINT"));
-      rl.question(`Approve ${toolName}(${JSON.stringify(args)})? [y/N] `, (answer) => {
-        abort.dispose();
-        rl.close();
-        resolve(answer.trim().toLowerCase() === "y");
-      });
+      rl.question(
+        `Approve ${escapeControlChars(toolName)}(${truncateArgsDisplay(args)})? ${offersAlways ? "[y]es / [a]lways / [N]o" : "[y]es / [N]o"} `,
+        (answer) => {
+          answered = true;
+          abort.dispose();
+          rl.close();
+          const typed = answer.trim().toLowerCase();
+          // Anything unrecognised is "no", exactly as the old [y/N] parse treated it: an approval a
+          // user did not clearly give is not an approval. An "a"/"always" typed at a shell prompt
+          // (not offered, see SHELL_TOOL_NAMES) is "unrecognised" by the same rule, not a special case.
+          const wantsAlways = offersAlways && (typed === "a" || typed === "always");
+          resolve(typed === "y" || typed === "yes" ? "once" : wantsAlways ? "always" : "no");
+        },
+      );
     });
+}
+
+// readline.Interface stores the stream it was built from as `.input`, undocumented in @types/node
+// (only the ReadLineOptions shape that CONSTRUCTS an Interface is typed, not the instance's own
+// field) but stable at runtime — verified directly against Node's readline implementation.
+function inputHasEnded(rl: Interface): boolean {
+  return (rl as unknown as { input: NodeJS.ReadableStream & { readableEnded?: boolean } }).input.readableEnded === true;
 }
 
 const PARSE_OPTIONS = {
@@ -314,6 +407,7 @@ const PARSE_OPTIONS = {
   resume: { type: "string" },
   continue: { type: "boolean" },
   "max-turns": { type: "string" },
+  "dangerously-skip-permissions": { type: "boolean" },
 } as const;
 
 type ParsedArgs = {
@@ -324,9 +418,11 @@ type ParsedArgs = {
     resume?: string;
     continue?: boolean;
     "max-turns"?: string;
+    "dangerously-skip-permissions"?: boolean;
   };
   positionals: string[];
   maxTurns: number | undefined;
+  skipPermissions: boolean;
 };
 
 // One convention across every handler below, so `run` reads as the sequence it is: a `number` is
@@ -361,7 +457,7 @@ function parseCliArgs(argv: string[]): ParsedArgs | number {
     return usageError(`--resume ${values.resume} looks for a session named "${values.resume}". Did you mean: seri --continue ${values.resume}`);
   }
 
-  return { values, positionals, maxTurns };
+  return { values, positionals, maxTurns, skipPermissions: values["dangerously-skip-permissions"] === true };
 }
 
 function handleInfoFlags(values: ParsedArgs["values"]): number | undefined {
@@ -496,9 +592,16 @@ type PreparedRun = {
   storeDir: string;
   tools: ToolSet;
   model: LanguageModel;
+  // Resolved here, the same way `model` is: a per-run fact the loop is driven with, carried
+  // beside the session rather than assumed equal to `session.permissionMode`. `--dangerously-
+  // skip-permissions` is the one thing that can make the two differ, and now that the value the
+  // loop actually reads lives on this object instead of being re-derived at the call site, there
+  // is no `session.permissionMode` assignment for a future edit to reach for by mistake — the
+  // session this run started from is untouched, and driveLoop never sees anything else to assign.
+  permissionMode: PermissionMode;
 };
 
-function prepareSession(ctx: RunContext, deps: CliDeps): PreparedRun | number {
+function prepareSession(ctx: RunContext, deps: CliDeps, skipPermissions: boolean): PreparedRun | number {
   const loadAgentsFileFn = deps.loadAgentsFile ?? loadAgentsFileReal;
 
   let session: RunSession;
@@ -574,7 +677,7 @@ function prepareSession(ctx: RunContext, deps: CliDeps): PreparedRun | number {
     loadVerifyConfig(),
   );
 
-  return { session, storeDir, tools, model };
+  return { session, storeDir, tools, model, permissionMode: skipPermissions ? "auto" : session.permissionMode };
 }
 
 type DoneReason = Extract<LoopEvent, { type: "done" }>["reason"];
@@ -592,8 +695,16 @@ async function driveLoop(
   ctx: RunContext,
   deps: CliDeps,
   maxTurns: number | undefined,
-): Promise<{ doneReason: DoneReason | undefined; cancelledBy: NodeJS.Signals | undefined; usage: RunUsage }> {
-  const { session, storeDir, tools, model } = prepared;
+): Promise<{
+  doneReason: DoneReason | undefined;
+  cancelledBy: NodeJS.Signals | undefined;
+  usage: RunUsage;
+  // The one fact `run()`'s exit code actually needs, not the two inputs it would otherwise have
+  // to reassemble itself: "refused at least once AND executed nothing at all" — see the tracking
+  // below for what each half means and why.
+  refusedWithoutRunning: boolean;
+}> {
+  const { session, storeDir, tools, model, permissionMode } = prepared;
   const runLoopFn = deps.runLoop ?? runLoopReal;
 
   // The controller lives here, not in the loop: runLoop is a library that is handed a signal, and
@@ -610,12 +721,27 @@ async function driveLoop(
 
   let doneReason: DoneReason | undefined;
   const usage: RunUsage = { inputTokens: undefined, outputTokens: undefined };
+  // Tracked here, not in loop.ts: whether "no-tool-call" counts as success is a judgement about
+  // what an exit code promises a shell, which is this consumer's business, not the loop's.
+  // `permission-denied` fires on two different facts carried in its `reason` — "blocked" is a
+  // mode (read-only, say) doing exactly what the user asked, not a signal anything went wrong;
+  // "declined" is a live refusal, either an actual "no" or nobody there to ask at all. Counting
+  // "blocked" here would flip `seri --resume x "review this repo" && open report.md` to exit 1
+  // solely because a read-only session correctly refused a write probe mid-review, breaking the
+  // `&&` over a mode working as intended. Only "declined" sets `hadDenial`. `tool-call` fires only
+  // for a call that both passed the gate and had a real tool definition (the unknown-tool branch
+  // also `continue`s past it) — so `ranTool` is exactly "did anything actually run".
+  let hadDenial = false;
+  let ranTool = false;
   try {
     for await (const event of runLoopFn({
       model,
       tools,
       messages: session.messages,
-      permissionMode: session.permissionMode,
+      // Resolved once, in prepareSession, and carried on `prepared` the same way `model` is —
+      // see PreparedRun's own comment. Reading it from there rather than re-deriving it here means
+      // there is nothing this call site could assign into `session` even by accident.
+      permissionMode,
       approvalPrompt: makeApprovalPrompt(deps.createInterface),
       system: session.systemPrompt,
       signal: controller.signal,
@@ -625,6 +751,8 @@ async function driveLoop(
         saveSession({ ...session, messages: event.messages }, ctx.sessionsDir);
         continue;
       }
+      if (event.type === "permission-denied" && event.reason === "declined") hadDenial = true;
+      if (event.type === "tool-call") ranTool = true;
       // Compaction splices the whole message array, so every rewind anchor recorded before this
       // point indexes into an array that no longer exists. The barrier is what lets `/rewind` say
       // so instead of silently slicing garbage. A session that never checkpointed has no log, and
@@ -665,13 +793,13 @@ async function driveLoop(
     unregisterCancel();
   }
 
-  return { doneReason, cancelledBy, usage };
+  return { doneReason, cancelledBy, usage, refusedWithoutRunning: hadDenial && !ranTool };
 }
 
 export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   const parsed = parseCliArgs(argv);
   if (typeof parsed === "number") return parsed;
-  const { values, positionals, maxTurns } = parsed;
+  const { values, positionals, maxTurns, skipPermissions } = parsed;
 
   const info = handleInfoFlags(values);
   if (info !== undefined) return info;
@@ -710,10 +838,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   const slash = handleSlashCommand(ctx);
   if (slash !== undefined) return slash;
 
-  const prepared = prepareSession(ctx, deps);
+  const prepared = prepareSession(ctx, deps, skipPermissions);
   if (typeof prepared === "number") return prepared;
 
-  const { doneReason, cancelledBy, usage } = await driveLoop(prepared, ctx, deps, maxTurns);
+  const { doneReason, cancelledBy, usage, refusedWithoutRunning } = await driveLoop(prepared, ctx, deps, maxTurns);
 
   // Before raiseSignal, and outside the exit-code branch below, because every way out of driveLoop
   // spent the same tokens: a turn the user cancelled and a turn the provider failed mid-way are
@@ -736,13 +864,33 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 
   // Not "an error event was seen": loop.ts yields `error` and carries on at three sites, and a run
   // that recovered from a failed tool call and then answered the user did not fail. The status
-  // answers one question — did the turn finish? — and `no-tool-call` is the only reason that means
-  // it did. A cap is not a finish: `max-iterations` yields `done` having stopped
-  // with the user's task unanswered, and `seri "big task" && deploy` must not deploy. loop.ts's two
-  // stream-error returns end the generator with no `done` at all and land on the same 1 — a throw
-  // escaping runLoop outright (`approvalPrompt` rejecting, or findSafeEvictionBoundary, neither of
-  // which is inside a try) ends it with no `done` too, but it comes out of driveLoop's `for await`
-  // and never gets here. All of these used to exit 0 and let `seri "…" && next` run next.
+  // answers one question — did the turn finish, and did it get anything past the gate? — and
+  // `no-tool-call` is necessary but, since approve-each became the default, no longer sufficient:
+  // a fresh session with no human present now reaches the approval prompt on its very first write,
+  // EOF resolves "no", the model gives up and answers with text, and that used to exit 0 — asked
+  // for permission, nobody was there, did nothing, reported success. `seri "…" && deploy` would
+  // deploy. So within `no-tool-call`, `refusedWithoutRunning` — driveLoop's own conclusion from
+  // "was anything DECLINED" and "did anything actually run", declined at least once AND executed
+  // nothing at all — is exit 1 too. "Declined" is a live refusal (a "no" answer, or nobody there
+  // to ask), not a `permission-denied` whose `reason` is "blocked" — a session in `read-only` that
+  // gets a write probe refused is the mode doing exactly what the user selected, not a failure, so
+  // `seri --resume x "review this repo" && open report.md` still exits 0 even if the model tries a
+  // write mid-review and is correctly blocked. A run with no tools and no denials (`seri "explain
+  // this repo"`) and a run where one call was declined but a later one ran (the user said no to
+  // one thing, the model did something else) both still exit 0 too, because both are a completed,
+  // accomplished turn, not a refusal the caller should treat as failure.
+  //
+  // A cap is not a finish: `max-iterations` yields `done` having stopped with the user's task
+  // unanswered, and `seri "big task" && deploy` must not deploy. `repeated-denials` is the same
+  // fact by the same reasoning — the run stopped itself after MAX_CONSECUTIVE_DENIALS declined tool
+  // calls (unreachable in `read-only`, where nothing is ever declined — see MAX_CONSECUTIVE_DENIALS
+  // in loop.ts), the task is exactly as unanswered as it would be at the iteration cap, and
+  // `&& deploy` must not run off the back of it either — both stay unconditionally 1, regardless of
+  // `refusedWithoutRunning`. loop.ts's two stream-error returns end the generator with no `done`
+  // at all and land on the same 1 — a throw escaping runLoop outright (`approvalPrompt` rejecting, or
+  // findSafeEvictionBoundary, neither of which is inside a try) ends it with no `done` too, but it
+  // comes out of driveLoop's `for await` and never gets here. All of these used to exit 0 and let
+  // `seri "…" && next` run next.
   //
   // `aborted` does not reach this line today, and that rests on `controller.abort()` having
   // exactly one caller: driveLoop's cancel handler, which sets cancelledBy first, so raiseSignal
@@ -751,7 +899,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
   // signal. tests/cli/cli.test.ts records that status for the displaced-slot case, but it asserts
   // the same 1 a second aborter would produce, so it will not go red when one is added: revisiting
   // this line is on whoever adds it.
-  return doneReason === "no-tool-call" ? 0 : 1;
+  if (doneReason === "no-tool-call") return refusedWithoutRunning ? 1 : 0;
+  return 1;
 }
 
 if (import.meta.main) {

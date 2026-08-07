@@ -6,10 +6,19 @@ import { tool, type ModelMessage, type ToolSet } from "ai";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
-import { runLoop, type LoopEvent } from "../../src/loop/loop";
+import { runLoop, type ApprovalAnswer, type LoopEvent } from "../../src/loop/loop";
 import { toolDefinitions } from "../../src/provider/tools";
 import { isBashAvailable } from "../../src/tools/bash";
-import { baseMessages, collect, makeTools, streamResult, textOnlyChunks, toolCallChunks, usage } from "./fixtures";
+import {
+  baseMessages,
+  collect,
+  makeTools,
+  repeatedWriteCalls,
+  streamResult,
+  textOnlyChunks,
+  toolCallChunks,
+  usage,
+} from "./fixtures";
 
 describe("runLoop", () => {
   test("executes a tool call and appends the result to the next turn", async () => {
@@ -106,7 +115,7 @@ describe("runLoop", () => {
       runLoop({ model, tools, messages: baseMessages, permissionMode: "read-only" }),
     );
 
-    expect(events).toContainEqual({ type: "permission-denied", name: "write_file" });
+    expect(events).toContainEqual({ type: "permission-denied", name: "write_file", reason: "blocked" });
     expect(events.find((e) => e.type === "tool-result")).toBeUndefined();
     expect(executed).toEqual([]);
     expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
@@ -521,10 +530,10 @@ describe("runLoop", () => {
           messages: baseMessages,
           permissionMode: "approve-each",
           // Exactly what cli.ts's prompt does when Ctrl-C arrives while it is parked: it closes the
-          // readline and resolves false, which on its own is indistinguishable from a typed "n".
+          // readline and resolves "no", which on its own is indistinguishable from a typed "n".
           approvalPrompt: async () => {
             controller.abort();
-            return false;
+            return "no";
           },
           signal: controller.signal,
         }),
@@ -564,7 +573,7 @@ describe("runLoop", () => {
           tools,
           messages: baseMessages,
           permissionMode: "approve-each",
-          approvalPrompt: async () => true,
+          approvalPrompt: async () => "once",
         }),
       );
 
@@ -590,13 +599,14 @@ describe("runLoop", () => {
           tools,
           messages: baseMessages,
           permissionMode: "approve-each",
-          approvalPrompt: async () => false,
+          approvalPrompt: async () => "no",
         }),
       );
 
-      expect(events).toContainEqual({ type: "permission-denied", name: "write_file" });
+      expect(events).toContainEqual({ type: "permission-denied", name: "write_file", reason: "declined" });
       expect(events.find((e) => e.type === "tool-result")).toBeUndefined();
       expect(executed).toEqual([]);
+      expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
     });
 
     test("treats approve-each with no approvalPrompt as denied", async () => {
@@ -615,8 +625,324 @@ describe("runLoop", () => {
         runLoop({ model, tools, messages: baseMessages, permissionMode: "approve-each" }),
       );
 
-      expect(events).toContainEqual({ type: "permission-denied", name: "write_file" });
+      expect(events).toContainEqual({ type: "permission-denied", name: "write_file", reason: "blocked" });
       expect(executed).toEqual([]);
+    });
+
+    test('"always" is not re-prompted for the same tool', async () => {
+      const executed: unknown[] = [];
+      const tools = makeTools(async (input) => {
+        executed.push(input);
+        return "ok";
+      });
+      const model = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(toolCallChunks("call-2", "write_file", { path: "b.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      let promptCalls = 0;
+      const events = await collect(
+        runLoop({
+          model,
+          tools,
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async () => {
+            promptCalls++;
+            // A second prompt for write_file would mean "always" was not remembered — answering
+            // "no" here turns that failure into a red assertion below instead of a green that
+            // happened to pass only because both files got written anyway.
+            return promptCalls === 1 ? "always" : "no";
+          },
+        }),
+      );
+
+      expect(promptCalls).toBe(1);
+      expect(executed).toEqual([{ path: "a.txt" }, { path: "b.txt" }]);
+      expect(events.filter((e) => e.type === "tool-allowed")).toEqual([{ type: "tool-allowed", name: "write_file" }]);
+      expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
+    });
+
+    test('"always" is scoped to the tool it was granted for', async () => {
+      const tools: ToolSet = {
+        write_file: tool({ description: "write a file", inputSchema: z.object({ path: z.string() }), execute: async () => "ok" }),
+        bash: tool({ description: "run a command", inputSchema: z.object({ command: z.string() }), execute: async () => "ok" }),
+      };
+      const model = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(toolCallChunks("call-2", "bash", { command: "echo hi" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      const promptedTools: string[] = [];
+      await collect(
+        runLoop({
+          model,
+          tools,
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async (toolName) => {
+            promptedTools.push(toolName);
+            return "always";
+          },
+        }),
+      );
+
+      expect(promptedTools).toEqual(["write_file", "bash"]);
+    });
+
+    test("a seeded allowedTools skips the prompt entirely for that tool", async () => {
+      const executed: unknown[] = [];
+      const tools = makeTools(async (input) => {
+        executed.push(input);
+        return "ok";
+      });
+      const model = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      const events = await collect(
+        runLoop({
+          model,
+          tools,
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          allowedTools: ["write_file"],
+          approvalPrompt: async () => {
+            throw new Error("must not be called: write_file was already seeded as allowed");
+          },
+        }),
+      );
+
+      expect(executed).toEqual([{ path: "a.txt" }]);
+      expect(events.find((e) => e.type === "tool-allowed")).toBeUndefined();
+    });
+
+    test('"once" does not accumulate into a grant', async () => {
+      const model = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(toolCallChunks("call-2", "write_file", { path: "b.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      let promptCalls = 0;
+      const events = await collect(
+        runLoop({
+          model,
+          tools: makeTools(async () => "ok"),
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async () => {
+            promptCalls++;
+            return "once";
+          },
+        }),
+      );
+
+      expect(promptCalls).toBe(2);
+      expect(events.find((e) => e.type === "tool-allowed")).toBeUndefined();
+    });
+
+    // approve-each, not read-only: a read-only block is now `reason: "blocked"` (the mode doing
+    // its job) and never touches consecutiveDenials at all — see MAX_CONSECUTIVE_DENIALS. Only a
+    // live "no" at the prompt is `reason: "declined"` and counts, so that is what this test needs
+    // to produce repeatedly.
+    test("repeated denials stop the run in materially fewer turns than the cap", async () => {
+      const model = new MockLanguageModelV4({ doStream: repeatedWriteCalls(50) });
+      const events = await collect(
+        runLoop({
+          model,
+          tools: makeTools(async () => "ok"),
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async () => "no",
+          maxIterations: 50,
+        }),
+      );
+
+      expect(events.at(-1)).toEqual({ type: "done", reason: "repeated-denials" });
+      expect(events.filter((e) => e.type === "permission-denied")).toHaveLength(3);
+      expect(model.doStreamCalls).toHaveLength(3);
+      expect(model.doStreamCalls.length).toBeLessThan(50);
+
+      // Resumability: the last tool-role message has one row per tool call the assistant message
+      // before it made, so the next --resume does not hit AI_MissingToolResultsError.
+      const lastUpdate = events
+        .filter((e): e is Extract<LoopEvent, { type: "messages-updated" }> => e.type === "messages-updated")
+        .at(-1);
+      const lastMessage = lastUpdate?.messages.at(-1);
+      const assistant = lastUpdate?.messages.at(-2);
+      const assistantCalls = Array.isArray(assistant?.content)
+        ? assistant.content.filter((part) => part.type === "tool-call").length
+        : 0;
+      expect(lastMessage?.role).toBe("tool");
+      expect((lastMessage?.content as unknown[]).length).toBe(assistantCalls);
+    });
+
+    // Symptom B from round 6's review: repeated-denials used to be reachable in read-only, where
+    // NOTHING can ever be approved — three probes, cheap for a model to produce even three turns
+    // apart, killed the run with the user's actual question unanswered. A read-only block is now
+    // `reason: "blocked"`, never `"declined"`, so it never touches consecutiveDenials at all — this
+    // run gets FIVE blocks in a row (more than MAX_CONSECUTIVE_DENIALS) and still runs to the
+    // iteration cap rather than stopping early, proving the mode alone cannot trip the stop no
+    // matter how many times it fires.
+    test("read-only blocks never trip repeated-denials, however many times they happen", async () => {
+      const model = new MockLanguageModelV4({ doStream: repeatedWriteCalls(5) });
+      const events = await collect(
+        runLoop({
+          model,
+          tools: makeTools(async () => "ok"),
+          messages: baseMessages,
+          permissionMode: "read-only",
+          maxIterations: 5,
+        }),
+      );
+
+      expect(events.at(-1)).toEqual({ type: "done", reason: "max-iterations" });
+      expect(events.filter((e) => e.type === "permission-denied")).toHaveLength(5);
+      expect(events.filter((e) => e.type === "permission-denied").every((e) => e.type === "permission-denied" && e.reason === "blocked")).toBe(true);
+      expect(model.doStreamCalls).toHaveLength(5);
+    });
+
+    // approve-each, not read-only: since round 6, a read-only block is `reason: "blocked"` and
+    // never touches consecutiveDenials at all, so read-only could no longer demonstrate a reset
+    // mattering — every denial in this test must be a live DECLINE to be a fact this counter
+    // tracks in the first place. Reverted (round 5): the write-only reset this test used to pin
+    // was itself reverted, because in read-only mode no write is ever approved, so a write-only
+    // reset could never fire and the counter became "denied write attempts this run" instead of
+    // "denied calls in a row" — a long, productive read-heavy session that merely probed a write a
+    // few times, turns apart, would die here having done nothing wrong. An approved read now
+    // resets the streak the same as any other approved call; see MAX_CONSECUTIVE_DENIALS for the
+    // (theoretical, unmeasured) padding risk this accepts instead. Negative control: a "reset only
+    // on an approved WRITE" rule (restore the `WRITE_TOOLS.has` guard around the reset in loop.ts)
+    // would let the two declined writes after the glob add straight onto the two before it and
+    // trip `repeated-denials` here instead.
+    test("an allowed read resets the streak the same as any other approved call", async () => {
+      const model = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(toolCallChunks("call-2", "glob", { pattern: "*" })),
+          streamResult(toolCallChunks("call-3", "write_file", { path: "b.txt" })),
+          streamResult(toolCallChunks("call-4", "write_file", { path: "c.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      const tools: ToolSet = {
+        write_file: tool({ description: "write a file", inputSchema: z.object({ path: z.string() }), execute: async () => "ok" }),
+        glob: tool({ description: "list files", inputSchema: z.object({ pattern: z.string() }), execute: async () => [] }),
+      };
+      const events = await collect(
+        runLoop({
+          model,
+          tools,
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async () => "no",
+        }),
+      );
+
+      expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
+      expect(events.filter((e) => e.type === "permission-denied")).toHaveLength(3);
+      // The glob itself still ran — an always-permitted read tool is not blocked by the streak.
+      expect(events).toContainEqual({ type: "tool-result", name: "glob", result: [] });
+    });
+
+    // The guard that the threshold is not 1: "denies the tool when the approval prompt rejects"
+    // above (a single DECLINED denial, then a text turn) already asserts `done: no-tool-call` —
+    // mutating MAX_CONSECUTIVE_DENIALS to 1 turns that assertion red — without this test needing
+    // to duplicate it. Not "read-only mode blocks a write tool instead of executing it": that
+    // denial is `reason: "blocked"`, which never touches consecutiveDenials at all, so it would
+    // stay green regardless of the threshold. Not "treats approve-each with no approvalPrompt as
+    // denied" either: that one is ALSO `reason: "blocked"`, and asserts no `done` reason besides.
+
+    test("an approval resets the consecutive-denial counter", async () => {
+      const model = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(toolCallChunks("call-2", "write_file", { path: "b.txt" })),
+          streamResult(toolCallChunks("call-3", "write_file", { path: "c.txt" })),
+          streamResult(toolCallChunks("call-4", "write_file", { path: "d.txt" })),
+          streamResult(toolCallChunks("call-5", "write_file", { path: "e.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      const answers: ApprovalAnswer[] = ["no", "no", "once", "no", "no"];
+      let i = 0;
+      const events = await collect(
+        runLoop({
+          model,
+          tools: makeTools(async () => "ok"),
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async () => answers[i++] ?? "no",
+        }),
+      );
+
+      expect(events.at(-1)).toEqual({ type: "done", reason: "no-tool-call" });
+      expect(events.find((e) => e.type === "done" && e.reason === "repeated-denials")).toBeUndefined();
+    });
+
+    // landmine 1's negative control: a cancel at the prompt must never be recorded as a denial.
+    // Pinned above at "a cancel at the approval prompt is recorded as a cancel, not as a denial"
+    // (the `describe("abort")` block) — one token changed (`return false` -> `return "no"`), every
+    // assertion in that test byte-identical.
+
+    test("the denial text names the permission mode and points at /mode", async () => {
+      const blockedModel = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      const blockedEvents = await collect(
+        runLoop({
+          model: blockedModel,
+          tools: makeTools(async () => "ok"),
+          messages: baseMessages,
+          permissionMode: "read-only",
+        }),
+      );
+      const blockedReason = toolResultReasonOf(blockedEvents);
+
+      const deniedModel = new MockLanguageModelV4({
+        doStream: [
+          streamResult(toolCallChunks("call-1", "write_file", { path: "a.txt" })),
+          streamResult(textOnlyChunks("Done")),
+        ],
+      });
+      const deniedEvents = await collect(
+        runLoop({
+          model: deniedModel,
+          tools: makeTools(async () => "ok"),
+          messages: baseMessages,
+          permissionMode: "approve-each",
+          approvalPrompt: async () => "no",
+        }),
+      );
+      const deniedReason = toolResultReasonOf(deniedEvents);
+
+      expect(blockedReason).toContain("permission mode: read-only");
+      expect(blockedReason).toContain("/mode");
+      expect(deniedReason).toContain("permission mode: approve-each");
+      // Landmine 3, pinned: a read-only block and a typed "n" are no longer byte-identical text.
+      expect(blockedReason).not.toBe(deniedReason);
+
+      function toolResultReasonOf(events: LoopEvent[]): string | undefined {
+        // Not `.at(-1)`: the denied call's turn is followed by a text-only turn, whose own
+        // messages-updated has an assistant message last, not a tool one. Find the tool row itself.
+        const toolMessage = events
+          .filter((e): e is Extract<LoopEvent, { type: "messages-updated" }> => e.type === "messages-updated")
+          .map((e) => e.messages.at(-1))
+          .find((message) => message?.role === "tool");
+        const row = (toolMessage?.content as { output: { reason?: string } }[] | undefined)?.[0];
+        return row?.output.reason;
+      }
     });
   });
 });

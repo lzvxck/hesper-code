@@ -8,8 +8,8 @@ import type { ModelMessage } from "ai";
 import { buildSystemPrompt } from "../../src/agents/systemPrompt";
 import { checkpointStoreDir, createCheckpointer } from "../../src/checkpoint/checkpoint";
 import { isGitAvailable } from "../../src/checkpoint/shadowGit";
-import { run } from "../../src/cli";
-import type { LoopEvent, runLoop } from "../../src/loop/loop";
+import { chooseInterfaceOutput, run } from "../../src/cli";
+import type { ApprovalAnswer, LoopEvent, runLoop } from "../../src/loop/loop";
 import { getGroqModel } from "../../src/provider/groq";
 import { toolDefinitions } from "../../src/provider/tools";
 import { onSignalCancel } from "../../src/signals";
@@ -150,7 +150,7 @@ describe("run (task invocation)", () => {
 
     expect(code).toBe(0);
     expect(capture()).toBeDefined();
-    expect(capture()?.permissionMode).toBe("read-only");
+    expect(capture()?.permissionMode).toBe("approve-each");
     // The same tool set, with only the filesystem-mutating tools wrapped for checkpointing.
     expect(Object.keys(capture()?.tools ?? {})).toEqual(Object.keys(toolDefinitions));
     expect(capture()?.tools.read_file).toBe(toolDefinitions.read_file);
@@ -163,6 +163,175 @@ describe("run (task invocation)", () => {
     // The assembled prompt, not the bare identity line: with no AGENTS.md this used to be 29
     // characters of identity and no tool guidance at all.
     expect(capture()?.system).toBe(buildSystemPrompt(""));
+  });
+
+  // Two assertions, because the one at :153 above would pass if the mode reached the loop but
+  // never made it to the session file on disk.
+  test("a new session is created in approve-each, and the file on disk says so too", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake, capture } = fakeRunLoop();
+
+    await captureLogs(() => run(["write", "hello.txt"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(capture()?.permissionMode).toBe("approve-each");
+    const createdId = readdirSync(sessionsDir)[0]!.replace(/\.json$/, "");
+    expect(loadSession(createdId, sessionsDir).permissionMode).toBe("approve-each");
+  });
+
+  test("--dangerously-skip-permissions reaches runLoop as auto", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake, capture } = fakeRunLoop();
+
+    await captureLogs(() =>
+      run(["--dangerously-skip-permissions", "write", "hello.txt"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }),
+    );
+
+    expect(capture()?.permissionMode).toBe("auto");
+  });
+
+  // Landmine 2's test: the flag overrides the loop's live view without ever reaching disk.
+  // Negative control: assigning session.permissionMode = "auto" in driveLoop instead of using the
+  // local override at cli.ts's opts literal turns this red.
+  test("--dangerously-skip-permissions is not persisted to the session file", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop(answeredTurn);
+
+    await captureLogs(() =>
+      run(["--dangerously-skip-permissions", "write", "hello.txt"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }),
+    );
+
+    const createdId = readdirSync(sessionsDir)[0]!.replace(/\.json$/, "");
+    expect(loadSession(createdId, sessionsDir).permissionMode).toBe("approve-each");
+  });
+
+  test("the tool-allowed event prints which tool was approved for the rest of the run", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([{ type: "tool-allowed", name: "bash" }, { type: "done", reason: "no-tool-call" }]);
+
+    const { logs } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(logs.some((line) => line.includes("bash"))).toBe(true);
+  });
+
+  // The second of the two sites output.ts's escapeControlChars covers: event.name here is the
+  // same model-supplied call.toolName the approval prompt renders (pinned separately in the
+  // "control character in the tool name" test), reached after the fact rather than at a prompt.
+  test("the tool-allowed event escapes a control character in the tool name", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([{ type: "tool-allowed", name: "write\x1bfile" }, { type: "done", reason: "no-tool-call" }]);
+
+    const { logs } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    const rendered = logs.join("\n");
+    expect(rendered).toContain("write\\x1bfile");
+    expect(rendered).not.toContain("write\x1bfile");
+  });
+
+  // Success check 4's exit-code half: a run stopped by repeated denials leaves the user's task as
+  // unanswered as one that hit the iteration cap, so it gets the same non-zero exit.
+  test("repeated-denials exits 1 and prints the /mode follow-up", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([{ type: "done", reason: "repeated-denials" }]);
+
+    const { code, logs } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(code).toBe(1);
+    expect(logs.some((line) => line.includes("/mode"))).toBe(true);
+  });
+
+  // The regression this closes: approve-each is now the default and EOF resolves "no" (this PR's
+  // own earlier fix), so a run with no human present — CI, a cron job, `< /dev/null` — now reaches
+  // exactly this path on its first write: asked for permission, nobody was there, did nothing, and
+  // used to report success. Measured on the compiled binary before this fix: exit 0, no file.
+  test("no-tool-call with a denial and nothing executed exits 1", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([{ type: "permission-denied", name: "write_file", reason: "declined" }, { type: "done", reason: "no-tool-call" }]);
+
+    const { code } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(code).toBe(1);
+  });
+
+  // The regression guard for the fix above: `seri "explain this repo"` calls nothing, is refused
+  // nothing, and answers with text — the most common invocation there is. If the exit-1 condition
+  // is too broad this goes red instead of the case it is meant to catch.
+  test("no-tool-call with no tools and no denials still exits 0", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop();
+
+    const { code } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(code).toBe(0);
+  });
+
+  // The other half of getting the boundary right: the user said no to one thing, the model did
+  // something else, and the turn finished having accomplished it. That is a normal, successful
+  // session, not a refusal — only "denied AND accomplished nothing" is exit 1, not "denied at all".
+  test("a denial followed by a tool that executes still exits 0", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([
+      { type: "permission-denied", name: "write_file", reason: "declined" },
+      { type: "tool-call", name: "bash", args: { command: "echo hi" } },
+      { type: "done", reason: "no-tool-call" },
+    ]);
+
+    const { code } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(code).toBe(0);
+  });
+
+  // repeated-denials is unconditionally 1 already (doneReason !== "no-tool-call" falls straight to
+  // the final `return 1`) — this pins that the new no-tool-call-only check does not creep onto it.
+  // A tool DID run here (ranTool: true) precisely so the check would wrongly flip this to 0 if it
+  // were ever applied outside the `no-tool-call` branch.
+  test("repeated-denials still exits 1 regardless of hadDenial/ranTool", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([
+      { type: "tool-call", name: "write_file", args: { path: "a.txt" } },
+      { type: "permission-denied", name: "write_file", reason: "declined" },
+      { type: "done", reason: "repeated-denials" },
+    ]);
+
+    const { code } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(code).toBe(1);
+  });
+
+  // Symptom A from round 6's review: a read-only session that correctly refuses a write probe is
+  // the mode doing exactly what the user selected, not a failure — `seri --resume x "review this
+  // repo" && open report.md` must not break the `&&` over that. Before this fix, a "blocked" and a
+  // "declined" permission-denied were indistinguishable to driveLoop and this exited 1.
+  test("a read-only block does not count as a denial for the exit code", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    const { fake } = fakeRunLoop([{ type: "permission-denied", name: "write_file", reason: "blocked" }, { type: "done", reason: "no-tool-call" }]);
+
+    const { code } = await captureLogs(() => run(["do", "a", "task"], { runLoop: fake, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(code).toBe(0);
+  });
+
+  // Option B: the allowlist is process-lifetime only, so a run that emits tool-allowed leaves no
+  // trace of it in the session file, and a later --continue passes no seed at all.
+  test("tool-allowed leaves no allowedTools field on the session file, and --continue seeds nothing", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+    // tool-allowed comes AFTER messages-updated so it is the run's last write to disk — if a
+    // future change persisted it, this ordering is what would catch a write that only looks
+    // absent because a later messages-updated overwrote it back out.
+    const { fake: firstRun } = fakeRunLoop([
+      ...answeredTurn,
+      { type: "tool-allowed", name: "bash" },
+    ]);
+
+    await captureLogs(() => run(["do", "a", "task"], { runLoop: firstRun, loadAgentsFile: () => "", sessionsDir }));
+
+    const createdId = readdirSync(sessionsDir)[0]!.replace(/\.json$/, "");
+    const onDisk = JSON.parse(readFileSync(join(sessionsDir, `${createdId}.json`), "utf8"));
+    expect("allowedTools" in onDisk).toBe(false);
+
+    const { fake: secondRun, capture } = fakeRunLoop();
+    await captureLogs(() => run(["--continue"], { runLoop: secondRun, loadAgentsFile: () => "", sessionsDir }));
+
+    expect(capture()?.allowedTools).toBeUndefined();
   });
 
   // A turn the provider answered, which is what makes the model worth recording. The bare `done`
@@ -345,10 +514,10 @@ describe("run (task invocation)", () => {
   // pressed again — which kills the process before the tool row is written and leaves the session
   // unresumable. Exercised through the prompt runLoop is actually given, because makeApprovalPrompt
   // is not exported and the wiring is half of what is being asserted.
-  test("the approval prompt it gives runLoop resolves false on abort instead of hanging", async () => {
+  test("the approval prompt it gives runLoop resolves no on abort instead of hanging", async () => {
     process.env.GROQ_API_KEY = "fake-test-key";
 
-    const answers: (boolean | undefined)[] = [];
+    const answers: (ApprovalAnswer | undefined)[] = [];
     async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
       // Aborted while the prompt is already open, which is the real sequence, and then aborted
       // before it is opened at all — an already-aborted signal fires no abort event, so a listener
@@ -371,8 +540,348 @@ describe("run (task invocation)", () => {
       console.log = originalLog;
     }
 
-    expect(answers).toEqual([false, false]);
+    expect(answers).toEqual(["no", "no"]);
   }, 10_000);
+
+  // The ordering trap this guards: rl.close() inside the question-answered path (makeApprovalPrompt)
+  // emits 'close' SYNCHRONOUSLY, before that path's own resolve() runs, so a close listener that
+  // does not check `answered` first would resolve "no" before the real answer ever gets a chance —
+  // turning every real "y"/"a" into "no". "once" vs "no" is what makes this a real negative
+  // control: an unguarded listener produces "no" here too, so a test whose expected answer is also
+  // "no" could not tell the two apart.
+  test("a real answer during the prompt is not swallowed by the close listener", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    let input: PassThrough | undefined;
+    const answers: (ApprovalAnswer | undefined)[] = [];
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      const pending = opts.approvalPrompt?.("write_file", { path: "a.txt" }, opts.signal);
+      input?.write("y\n");
+      answers.push(await pending);
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        createInterface: () => {
+          input = new PassThrough();
+          return createInterface({ input, output: new PassThrough() });
+        },
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(answers).toEqual(["once"]);
+  }, 10_000);
+
+  // The regression this guards: approve-each is now the default, so a run with no human at the
+  // terminal at all — CI, a cron job, `seri "..." < /dev/null` — reaches this prompt on its first
+  // write. ONE stream for the whole run, ended ONCE before any prompt opens — this is what makes
+  // it faithful to production: `process.stdin` is a single shared stream, and a `< /dev/null`
+  // launch is already fully at EOF before the first prompt ever reads it. The first Interface
+  // created is what actually starts consuming it and discovers that, so its own 'close' fires
+  // correctly (`answers[0]` is "no"). A SECOND Interface, opened on the same stream after the
+  // first has already drained it to 'end', attaches its listeners AFTER that event already
+  // happened — EventEmitters do not replay past events to a late listener — so its 'close' never
+  // fires and its question's callback never runs: the promise hangs forever. A fresh PassThrough
+  // per prompt (what this test used to do, and why it stayed green while this was broken) gives
+  // each prompt its own independent EOF and hides exactly this failure. Raced against a timeout so
+  // a regression here fails as "unsettled" instead of wedging this test (and, in production, the
+  // run) indefinitely.
+  test("stdin closing resolves no for every prompt, not just the first", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    const input = new PassThrough();
+    input.end();
+    const answers: (ApprovalAnswer | "unsettled")[] = [];
+    const unsettledAfter = (ms: number): Promise<"unsettled"> => new Promise((r) => setTimeout(() => r("unsettled"), ms));
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      const first = opts.approvalPrompt?.("write_file", { path: "a.txt" }, opts.signal);
+      answers.push((await Promise.race([first, unsettledAfter(2000)])) as ApprovalAnswer | "unsettled");
+
+      const second = opts.approvalPrompt?.("write_file", { path: "b.txt" }, opts.signal);
+      answers.push((await Promise.race([second, unsettledAfter(2000)])) as ApprovalAnswer | "unsettled");
+
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        // The SAME stream returned to every call, matching production's shared process.stdin —
+        // NOT a fresh PassThrough per prompt, which is the divergence that hid this bug before.
+        createInterface: () => createInterface({ input, output: new PassThrough() }),
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(answers).toEqual(["no", "no"]);
+  }, 10_000);
+
+  // readline's tty path calls close() on Ctrl-D at an empty line WITHOUT the underlying stream
+  // ending — verified directly against Node's readline implementation (rl.close() fires 'close'
+  // while input.readableEnded stays false). Simulated here by calling rl.close() directly, the
+  // same effect Ctrl-D has, on a stream that is never `.end()`-ed. A regression that latches
+  // `ended` on ANY 'close' (not just a real EOF) would deny the SECOND prompt too, with nothing
+  // rendered, even though its own Interface is a fresh one on an unrelated stream.
+  test("closing the interface without ending the input does not latch every later prompt", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    let input: PassThrough | undefined;
+    let rl: Interface | undefined;
+    const answers: (ApprovalAnswer | undefined)[] = [];
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      const first = opts.approvalPrompt?.("write_file", { path: "a.txt" }, opts.signal);
+      rl?.close();
+      answers.push(await first);
+
+      const second = opts.approvalPrompt?.("write_file", { path: "b.txt" }, opts.signal);
+      input?.write("y\n");
+      answers.push(await second);
+
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        // A fresh stream per prompt, deliberately unlike the shared-stream test above: this test
+        // is about the LATCH surviving a close that was not a real end, not about stream sharing.
+        createInterface: () => {
+          input = new PassThrough();
+          rl = createInterface({ input, output: new PassThrough() });
+          return rl;
+        },
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(answers).toEqual(["no", "once"]);
+  }, 10_000);
+
+  // Exercises makeApprovalPrompt directly (via the fake runLoop below), bypassing the real gate —
+  // in production the gate means this toolName is always one of the fixed WRITE_TOOL_NAMES, never
+  // model-invented (see escapeControlChars's own comment in output.ts for why). This pins the
+  // escaping mechanism itself, kept as defence-in-depth for a future non-fixed write tool name: a
+  // control character (here, ESC — the start of an ANSI sequence) could otherwise paint over the
+  // real prompt or scroll it off-screen; escaped, it is inert text a user can read.
+  test("a control character in the tool name is escaped before it reaches the terminal", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    let input: PassThrough | undefined;
+    let rendered = "";
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      const pending = opts.approvalPrompt?.("write\x1bfile", { path: "a.txt" }, opts.signal);
+      input?.write("n\n");
+      await pending;
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        createInterface: () => {
+          input = new PassThrough();
+          const output = new PassThrough();
+          output.on("data", (chunk: Buffer) => {
+            rendered += chunk.toString();
+          });
+          return createInterface({ input, output });
+        },
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(rendered).toContain("write\\x1bfile");
+    expect(rendered).not.toContain("write\x1bfile");
+  }, 10_000);
+
+  // write_file's input carries the whole file body: an uncapped JSON.stringify would render a
+  // 500-line generated module on one prompt line and scroll the question itself out of
+  // scrollback before the user could even see it, let alone answer it.
+  test("a long write_file body is truncated on the approval prompt line", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    let input: PassThrough | undefined;
+    let rendered = "";
+    const longContent = "x".repeat(2000);
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      const pending = opts.approvalPrompt?.("write_file", { path: "a.txt", content: longContent }, opts.signal);
+      input?.write("n\n");
+      await pending;
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        createInterface: () => {
+          input = new PassThrough();
+          const output = new PassThrough();
+          output.on("data", (chunk: Buffer) => {
+            rendered += chunk.toString();
+          });
+          return createInterface({ input, output });
+        },
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(rendered).not.toContain(longContent);
+    expect(rendered).toContain("…");
+  }, 10_000);
+
+  // JSON.stringify(undefined) returns the value undefined, not a string, and .length on that
+  // throws — inside this Promise executor, which rejects approvalPrompt and escapes driveLoop as
+  // an unhandled rejection, skipping printUsage and the exit-code logic entirely. Unreachable via
+  // the real gate today (call.input is provider-parsed JSON), but ApprovalPrompt is an exported
+  // seam Stage 11's Ink prompt re-implements against, and args: unknown promises nothing.
+  test("undefined args on the prompt do not throw", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    let input: PassThrough | undefined;
+    let rendered = "";
+    let threw = false;
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      try {
+        const pending = opts.approvalPrompt?.("write_file", undefined, opts.signal);
+        input?.write("n\n");
+        await pending;
+      } catch {
+        threw = true;
+      }
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        createInterface: () => {
+          input = new PassThrough();
+          const output = new PassThrough();
+          output.on("data", (chunk: Buffer) => {
+            rendered += chunk.toString();
+          });
+          return createInterface({ input, output });
+        },
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(threw).toBe(false);
+    expect(rendered).toContain("undefined");
+  }, 10_000);
+
+  // The allowlist is keyed on tool name alone, and approving one bash call because it looked like
+  // `ls -la` would silently auto-approve `rm -rf ./src` under the same grant — see
+  // SHELL_TOOL_NAMES's own comment in cli.ts. bash and powershell never offer "always" at all.
+  test("the prompt does not offer always for bash, and typing a resolves no", async () => {
+    process.env.GROQ_API_KEY = "fake-test-key";
+
+    let input: PassThrough | undefined;
+    let rendered = "";
+    const answers: (ApprovalAnswer | undefined)[] = [];
+
+    async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
+      const pending = opts.approvalPrompt?.("bash", { command: "ls -la" }, opts.signal);
+      input?.write("a\n");
+      answers.push(await pending);
+      yield { type: "done", reason: "no-tool-call" };
+      return opts.messages;
+    }
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      await run(["write", "hello.txt"], {
+        runLoop: runLoopFake,
+        loadAgentsFile: () => "",
+        sessionsDir,
+        createInterface: () => {
+          input = new PassThrough();
+          const output = new PassThrough();
+          output.on("data", (chunk: Buffer) => {
+            rendered += chunk.toString();
+          });
+          return createInterface({ input, output });
+        },
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(rendered).not.toContain("[a]lways");
+    expect(rendered).toContain("[y]es / [N]o");
+    expect(answers).toEqual(["no"]);
+  }, 10_000);
+
+  // chooseInterfaceOutput is what the default (uninjected) Interface factory uses — every other
+  // test in this file supplies its own createInterface and never exercises it, so this is the only
+  // coverage of the TTY-symmetric selection itself. `| tee log` redirects stdout; `2> errors.log`
+  // redirects stderr; neither, or both, redirected is the two-arg call's own fallback case.
+  test("chooseInterfaceOutput picks whichever of stderr/stdout is still a terminal", () => {
+    const originalStderrTTY = process.stderr.isTTY;
+    const originalStdoutTTY = process.stdout.isTTY;
+    try {
+      process.stderr.isTTY = true;
+      process.stdout.isTTY = false;
+      expect(chooseInterfaceOutput()).toBe(process.stderr);
+
+      process.stderr.isTTY = false;
+      process.stdout.isTTY = true;
+      expect(chooseInterfaceOutput()).toBe(process.stdout);
+
+      process.stderr.isTTY = false;
+      process.stdout.isTTY = false;
+      expect(chooseInterfaceOutput()).toBe(process.stderr);
+    } finally {
+      process.stderr.isTTY = originalStderrTTY;
+      process.stdout.isTTY = originalStdoutTTY;
+    }
+  });
 
   // The press this prompt has to catch never arrives as a process signal. Measured on a real pty
   // with all three candidate handlers registered while rl.question was up and one real 0x03 sent:
@@ -383,13 +892,13 @@ describe("run (task invocation)", () => {
   // process outright and left the session unresumable.
   //
   // "Cancelled" rather than "denied" is asserted as the cancel slot being spent, because both
-  // answers are `false` — that is exactly how the loop tells them apart, by re-checking the signal.
+  // answers are `"no"` — that is exactly how the loop tells them apart, by re-checking the signal.
   test("a SIGINT on the readline interface cancels through signals.ts instead of denying", async () => {
     process.env.GROQ_API_KEY = "fake-test-key";
 
     let rl: Interface | undefined;
 
-    let answer: boolean | "unsettled" | undefined;
+    let answer: ApprovalAnswer | "unsettled" | undefined;
     let cancelledBy: NodeJS.Signals | undefined;
     async function* runLoopFake(opts: RunLoopOpts): AsyncGenerator<LoopEvent, RunLoopOpts["messages"]> {
       // The run's own cancel is displaced for the duration of the turn, deliberately: signals.ts
@@ -441,7 +950,7 @@ describe("run (task invocation)", () => {
     }
 
     expect(cancelledBy).toBe("SIGINT");
-    expect(answer).toBe(false);
+    expect(answer).toBe("no");
     // `done: "aborted"` reaching cli.ts's final `return` at all means the abort did not come
     // through cli.ts's own cancel slot, so raiseSignal never ran and the status below is what the
     // shell sees. Here that shape exists because this fake displaces the slot; in production it

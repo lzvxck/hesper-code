@@ -29,6 +29,7 @@ export const USAGE = `Usage:
 
 Options:
   --max-turns <n>                 stop after n model turns (default 500)
+  --dangerously-skip-permissions  run every tool with no approval prompt (attended use only)
   --                              everything after this is the task, flags included:
                                     seri -- fix the --help output`;
 
@@ -41,6 +42,22 @@ export function usageError(message: string): number {
   console.error(message);
   console.error(USAGE);
   return 2;
+}
+
+// Defence-in-depth, not a live threat today: this file renders a tool name at two sites — the
+// approval prompt (cli.ts) and the tool-allowed line below — and both are reached only when
+// `checkPermission` returns `needs-approval`/`allow-new`, which requires `WRITE_TOOLS.has(name)`
+// (gate.ts). That means the name at both sites is always one of the fixed `WRITE_TOOL_NAMES`
+// strings today, never model-invented — a model that names a tool anything else takes the early
+// "allow" return in checkPermission and never reaches either render site. Kept anyway, cheaply,
+// for the day `WRITE_TOOL_NAMES` grows a name that is not a compile-time constant (an MCP-provided
+// write tool, say): a newline or an ANSI escape sequence in THAT name could scroll real output
+// off-screen or paint a fake line, and this is what would stop it. Only control characters and DEL
+// are escaped, not the whole name the way a prompt's `args` are already wrapped in JSON.stringify:
+// a legitimate name is always a plain identifier (write_file, bash, …), and stringifying it would
+// put visible quotes on every single render for a case that, today, cannot happen at all.
+export function escapeControlChars(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
 }
 
 // stderr, not stdout: stdout carries the model's own output and is routinely piped, and a warning
@@ -130,6 +147,13 @@ export function printEvent(event: LoopEvent): void {
     case "permission-denied":
       console.log(`✗ ${event.name} blocked`);
       break;
+    // Printed because a grant the user cannot see is a grant they cannot revoke. "for this run" is
+    // the persistence decision — keep this string matching what actually happens. event.name is
+    // the same model-supplied call.toolName the approval prompt renders, so it gets the same
+    // escaping — see escapeControlChars above.
+    case "tool-allowed":
+      console.log(`✓ ${escapeControlChars(event.name)} approved for the rest of this run`);
+      break;
     case "compacted":
       console.log(`\n⚙ compacted ${event.evictedCount} messages`);
       break;
@@ -153,6 +177,17 @@ export function printEvent(event: LoopEvent): void {
       break;
     case "done":
       console.log(`\n(done: ${event.reason})`);
+      // The one reason whose fix is a command the user has to type. `max-iterations` and
+      // `no-tool-call` need no follow-up and `aborted` was the user's own doing.
+      if (event.reason === "repeated-denials") {
+        // Reachable only in approve-each: a read-only block is never a decline (see the
+        // permission-denied event's `reason`, and MAX_CONSECUTIVE_DENIALS in loop.ts), so getting
+        // here means a live "no" three times in a row. "Answer 'a'" is not always the fix even so —
+        // bash and powershell never offer it (the one-rule allowlist: always-allow is scoped to
+        // write_file/edit, never a shell), so a streak of shell calls needs /mode instead.
+        console.log("Several tool calls were refused in a row, so the run stopped. Run /mode to");
+        console.log("switch to auto, or answer 'a' at the next write_file/edit prompt to allow it.");
+      }
       break;
     case "error":
       console.error(event.error);
