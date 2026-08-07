@@ -141,6 +141,217 @@
   }
 }
 
+/*
+ * The holding page — the one dark surface in the product, and the only place these run.
+ *
+ * Every animation below is plain CSS, which matters for more than taste: a CSS animation
+ * starts when the stylesheet is parsed, so an `opacity: 0` keyframe with `fill-mode: both`
+ * is not a hidden state that needs JS to come and undo it. That is the whole difference
+ * between this and `Reveal`, which coming-soon.tsx documents at length.
+ *
+ * The idle motions (holding-drift, holding-swell, holding-halo-pulse) run at periods that
+ * do not divide into each other — 19s, 27s and 31s — so the composite takes minutes to
+ * repeat a pose. A single loop reads as a metronome within two cycles, and once the eye
+ * finds the period the whole scene stops looking like weather.
+ */
+@layer utilities {
+  body:has(.holding) {
+    background: var(--ink);
+  }
+
+  .holding-sun {
+    animation: holding-sunrise 2200ms var(--ease-brand) 300ms both;
+  }
+
+  .holding-horizon {
+    transform-origin: 311px 121px;
+    animation: holding-horizon-draw 1400ms var(--ease-brand) both;
+  }
+
+  .holding-mark {
+    animation: holding-drift 19s ease-in-out 2600ms infinite;
+  }
+
+  .holding-mark-svg {
+    animation: holding-swell 27s ease-in-out 2600ms infinite;
+  }
+
+  /*
+   * A halo behind the sun, so the rise carries light and not only shape.
+   *
+   * Five stops rather than two, and they are not decoration: a straight two-stop ramp
+   * flattens to zero at a definite radius, and the eye finds that radius — it read as a
+   * grey disc with an edge rather than as light, worst at mobile widths where it covers
+   * most of the screen. The stops below approximate a gaussian falloff, which has no
+   * boundary to find. Sized against the viewport for the same reason.
+   */
+  .holding-mark::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 46%;
+    width: min(400px, 92vw);
+    height: min(400px, 92vw);
+    transform-origin: center;
+    translate: -50% -50%;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgba(250, 249, 245, 0.17) 0%,
+      rgba(250, 249, 245, 0.1) 24%,
+      rgba(250, 249, 245, 0.045) 44%,
+      rgba(250, 249, 245, 0.015) 62%,
+      rgba(250, 249, 245, 0) 78%
+    );
+    pointer-events: none;
+    animation:
+      holding-halo-bloom 2600ms var(--ease-brand) 500ms both,
+      holding-halo-pulse 31s ease-in-out 3100ms infinite;
+  }
+
+  .holding-wordmark {
+    animation: holding-lift 1400ms var(--ease-brand) 1200ms both;
+  }
+
+  .holding-headline {
+    animation: holding-rise-mask 1500ms var(--ease-brand) 1400ms both;
+  }
+
+  .holding-line {
+    animation: holding-lift 1400ms var(--ease-brand) 1750ms both;
+  }
+
+  .holding-rule {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--on-ink-hairline) 20%,
+      var(--on-ink-hairline) 80%,
+      transparent
+    );
+    animation: holding-rule-open 1600ms var(--ease-brand) 2100ms both;
+  }
+}
+
+@keyframes holding-sunrise {
+  from {
+    transform: translateY(122px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes holding-horizon-draw {
+  from {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes holding-halo-bloom {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes holding-lift {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+/*
+ * The bottom inset ends at -25% rather than 0 because "Coming soon" has a descending g:
+ * at 0 the tail is still clipped when the animation finishes.
+ */
+@keyframes holding-rise-mask {
+  from {
+    clip-path: inset(0 0 110% 0);
+    transform: translateY(0.2em);
+  }
+  to {
+    clip-path: inset(0 0 -25% 0);
+    transform: none;
+  }
+}
+
+@keyframes holding-rule-open {
+  from {
+    opacity: 0;
+    transform: scaleX(0.2);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+/* Four asymmetric steps rather than a peak at 50%: a symmetric bob reads as a mechanism. */
+@keyframes holding-drift {
+  0% {
+    transform: translateY(0);
+  }
+  27% {
+    transform: translateY(-7px);
+  }
+  58% {
+    transform: translateY(-2px);
+  }
+  81% {
+    transform: translateY(-6px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes holding-swell {
+  0% {
+    transform: scale(1);
+  }
+  43% {
+    transform: scale(1.018);
+  }
+  72% {
+    transform: scale(1.006);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes holding-halo-pulse {
+  0% {
+    opacity: 0.82;
+  }
+  38% {
+    opacity: 1;
+  }
+  69% {
+    opacity: 0.88;
+  }
+  100% {
+    opacity: 0.82;
+  }
+}
+
 /* Section 6 + accessibility: reduced motion collapses to near-instant, no transforms. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -160,5 +371,69 @@
   [data-reveal="shown"] {
     transition: none;
     transition-delay: 0ms;
+  }
+
+  /*
+   * The holding page gets a real reduced-motion variant rather than the blanket 0.01ms
+   * above, and the distinction is the difference between "less motion" and "broken".
+   *
+   * The blanket rule collapses duration but leaves animation-DELAY untouched, so the
+   * holding page assembled itself over two seconds as a sequence of hard pops — measured,
+   * not guessed: under emulated `reduce` every animation on this page reports a computed
+   * duration of 0ms while its delay still runs. That is what a visitor with Windows 11's
+   * "Animation effects" turned off actually saw, and it is worse than either extreme.
+   *
+   * What "reduce" asks for is the removal of vestibular triggers — translation, scale,
+   * parallax, looping motion. Opacity is not one of them, and a cross-fade is the standard
+   * substitute. So everything below fades in place, at the 100ms DESIGN.md's accessibility
+   * section names for this case, on a compressed stagger that finishes in ~400ms instead
+   * of 2.2s. Nothing moves, nothing loops, and nothing snaps.
+   *
+   * These beat the `*` rule above on specificity (0,1,0 against 0,0,0) with both marked
+   * important, so ordering is not what makes them win.
+   */
+  .holding-sun,
+  .holding-horizon,
+  .holding-mark::before,
+  .holding-wordmark,
+  .holding-headline,
+  .holding-line,
+  .holding-rule {
+    animation: holding-fade 100ms linear both !important;
+  }
+
+  .holding-sun,
+  .holding-horizon {
+    animation-delay: 0ms !important;
+  }
+  .holding-mark::before {
+    animation-delay: 80ms !important;
+  }
+  .holding-wordmark {
+    animation-delay: 160ms !important;
+  }
+  .holding-headline {
+    animation-delay: 240ms !important;
+  }
+  .holding-line {
+    animation-delay: 320ms !important;
+  }
+  .holding-rule {
+    animation-delay: 400ms !important;
+  }
+
+  /* The idle loops carry no information at all — they are only movement. Drop them. */
+  .holding-mark,
+  .holding-mark-svg {
+    animation: none !important;
+  }
+}
+
+@keyframes holding-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
