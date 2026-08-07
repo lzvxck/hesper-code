@@ -13,10 +13,6 @@ import { ComingSoon } from "@seri/ui";
  */
 export default function Holding() {
   return (
-    <ComingSoon
-      wordmark="Seriora Portal"
-      line="Plans and billing for seri."
-      builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
-    />
+    <ComingSoon wordmark="Seriora Portal" line="Plans and billing for seri." />
   );
 }
