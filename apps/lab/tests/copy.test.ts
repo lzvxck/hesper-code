@@ -55,10 +55,8 @@ describe("seriora.ai copy", () => {
    * is the products list. Both cuts are asserted to have removed something — a selector that
    * quietly stops matching would leave this test passing while checking nothing.
    *
-   * The nav and the footer are outside <main> deliberately, not overlooked: SiteNav's "Agent"
-   * entry and SiteFooter's `lzvxck/seri-agent` repo label are site chrome that names the
-   * product on purpose, and the source-reading version of this test could not see the footer
-   * one at all, because it is built from a URL constant the test cut before matching.
+   * The nav is outside <main> deliberately, not overlooked: SiteNav's "Agent" entry is site
+   * chrome that names the product on purpose.
    *
    * "Seriora" is the lab itself, not a product, and does not match \bseri\b.
    */

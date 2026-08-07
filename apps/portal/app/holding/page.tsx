@@ -1,7 +1,5 @@
 import { ComingSoon } from "@seri/ui";
 
-const REPO_URL = "https://github.com/lzvxck/seri-agent";
-
 /*
  * The page proxy.ts rewrites `/`, /billing and /usage to while SERI_COMING_SOON is set, ahead
  * of authkitProxy, so it is the one surface of this app a visitor without a WorkOS session can
@@ -18,7 +16,6 @@ export default function Holding() {
     <ComingSoon
       wordmark="Seriora Portal"
       line="Plans and billing for seri."
-      repoUrl={REPO_URL}
       builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
     />
   );

@@ -1,12 +1,10 @@
 import { ArrowRight, History, Key, Layers, ListChecks, Network, Route } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Button, GitHubMark, Reveal, SiteFooter, SiteNav, rowDelay } from "@seri/ui";
+import { Button, Reveal, SiteFooter, SiteNav, rowDelay } from "@seri/ui";
 
 import { InstallTabs } from "@/components/InstallTabs";
 import { LearningLoop } from "@/components/LearningLoop";
-
-const REPO_URL = "https://github.com/lzvxck/seri-agent";
 
 /*
  * One card per property that makes the learning claim checkable: how much it can keep,
@@ -100,7 +98,6 @@ export default function Home() {
     <>
       <SiteNav
         wordmark="seri"
-        repoUrl={REPO_URL}
         links={[
           { label: "Install", href: "#install" },
           { label: "Portal", href: "https://portal.seriora.ai" },
@@ -141,12 +138,6 @@ export default function Home() {
                 <a href="#after-install">
                   Get set up
                   <ArrowRight size={14} aria-hidden="true" />
-                </a>
-              </Button>
-              <Button asChild variant="outline">
-                <a href={REPO_URL} target="_blank" rel="noreferrer">
-                  <GitHubMark />
-                  View the source
                 </a>
               </Button>
             </div>
@@ -366,11 +357,7 @@ export default function Home() {
         </section>
       </main>
 
-      <SiteFooter
-        wordmark="seri"
-        repoUrl={REPO_URL}
-        builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }}
-      />
+      <SiteFooter wordmark="seri" builtBy={{ label: "Seriora Research", href: "https://seriora.ai" }} />
     </>
   );
 }
