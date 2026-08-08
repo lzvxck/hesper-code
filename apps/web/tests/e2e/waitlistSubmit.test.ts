@@ -194,7 +194,11 @@ describe.skipIf(!process.env.SERI_E2E)("waitlist submit e2e", () => {
     const response = await submitWaitlist(pageUrl, "e2e-control@example.com", "");
     const body = await response.text();
 
+    // Absence of the success copy alone doesn't discriminate — an empty body or a redirect
+    // would pass that assertion too. Asserting the failed copy is present is what proves the
+    // response actually reflects the insert failure rather than something else going wrong.
     expect(body).not.toContain(WAITLIST_COPY.ok);
+    expect(body).toContain(WAITLIST_COPY.failed);
 
     stubStatus = 201;
   });
