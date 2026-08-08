@@ -6,8 +6,10 @@ import { describe, expect, test } from "bun:test";
 import { assertClean, textNodes } from "@seri/copy-policy";
 import Holding from "../app/holding/page";
 import { metadata } from "../app/layout";
+import Privacy, { metadata as privacyMetadata } from "../app/privacy/page";
 import Home from "../app/page";
 import { ProductList, type Product } from "../app/ProductList";
+import { WAITLIST_COPY } from "../lib/waitlistCopy";
 
 const FIXTURES: Product[] = [
   { name: "one", href: "https://example.com/one", body: "The first product." },
@@ -37,11 +39,21 @@ describe("seriora.ai copy", () => {
    * same policy as the page it stands in for, including the layout metadata a visitor still
    * gets served underneath it, and it is asserted here rather than in packages/ui because this
    * is where this site's real props for <ComingSoon> are written.
+   *
+   * WAITLIST_COPY is folded in the same way InstallTabs.PLATFORMS is folded in on apps/web:
+   * `ok`, `invalid` and `failed` only ever appear as WaitlistForm's `state.message`, set after a
+   * Server Action response, so renderToStaticMarkup's initial render never contains them.
    */
   test("the holding page says nothing the copy policy forbids", () => {
-    assertClean(`${textNodes(renderToStaticMarkup(createElement(Holding)))} ${META}`, {
+    const waitlistCopy = Object.values(WAITLIST_COPY).join(" ");
+    assertClean(`${textNodes(renderToStaticMarkup(createElement(Holding)))} ${META} ${waitlistCopy}`, {
       allowComingSoon: true,
     });
+  });
+
+  // The privacy page does not say "coming soon" and must not be granted that exemption.
+  test("the privacy page says nothing the copy policy forbids", () => {
+    assertClean(`${textNodes(renderToStaticMarkup(createElement(Privacy)))} ${privacyMetadata.title}`);
   });
 
   test("leads with the research thesis", () => {
