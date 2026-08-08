@@ -5,7 +5,7 @@ import { HONEYPOT_FIELD } from "./shared";
 
 export type WaitlistState = { status: "idle" | "ok" | "error"; message: string };
 
-export const emailSchema = z.string().trim().toLowerCase().max(254).pipe(z.email());
+const emailSchema = z.string().trim().toLowerCase().max(254).pipe(z.email());
 
 /** Normalised address, or null if the input is not one. */
 export function parseEmail(raw: FormDataEntryValue | null): string | null {
