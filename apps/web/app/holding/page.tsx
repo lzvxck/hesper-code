@@ -1,5 +1,7 @@
 import { ComingSoon } from "@seri/ui";
 
+import { WaitlistForm } from "@/components/WaitlistForm";
+
 /*
  * The page proxy.ts rewrites `/` to while SERI_COMING_SOON is set. It reads no environment
  * variable, and that is load-bearing rather than incidental: this route is statically
@@ -11,9 +13,20 @@ import { ComingSoon } from "@seri/ui";
  * carries no inbound link, and closing it would cost middleware logic running on every request
  * forever to hide a page whose whole existence is temporary — the end state is this PR
  * reverted, not the flag left off.
+ *
+ * <WaitlistForm> goes through ComingSoon's `after` prop rather than sitting outside <main> as a
+ * sibling: `after` renders inside the same min-h-[100svh]/justify-center <main>, without this
+ * page reaching into ComingSoon's internals. min-h-[100svh] is a floor, not a cap, so it does
+ * not by itself guarantee the form stays within the first viewport for every possible content
+ * height — that has been measured, not assumed, at 1440x900 and 390x844 (both motion settings);
+ * re-check those sizes if this page's copy or WaitlistForm's markup grows materially.
  */
 export default function Holding() {
   return (
-    <ComingSoon wordmark="Seriora" line="seri — a coding agent that learns from its own work." />
+    <ComingSoon
+      wordmark="Seriora"
+      line="seri — a coding agent that learns from its own work."
+      after={<WaitlistForm />}
+    />
   );
 }

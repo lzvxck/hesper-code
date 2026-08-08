@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { NightField } from "./night-field";
 
 /*
@@ -34,6 +36,13 @@ import { NightField } from "./night-field";
  *
  * `min-h-[100svh]` lets the field fill the viewport instead of floating the three lines in a
  * band of ink on a tall screen.
+ *
+ * `after` is the one extension point: content rendered inside this same `<main>`, below the
+ * centered mark/wordmark/headline block, so it shares the container's `min-h-[100svh]` and
+ * `justify-center` rather than a caller having to reach in and override them from outside (the
+ * min-h-0/flex-1 wrapper apps/web/app/holding/page.tsx used before this existed, which only
+ * worked because this root happened to be a `<main>` — nothing enforced that staying true).
+ * apps/portal and apps/lab render <ComingSoon> with no `after`, so they are unaffected.
  */
 /*
  * `wordmark` names the ORGANISATION, not the product, and that became load-bearing when
@@ -42,7 +51,15 @@ import { NightField } from "./night-field";
  * — seri is the agent, Seriora is the lab that makes it. All three sites therefore lead
  * with Seriora (lab and portal already did), and a product name belongs in `line`.
  */
-export function ComingSoon({ wordmark, line }: { wordmark: string; line: string }) {
+export function ComingSoon({
+  wordmark,
+  line,
+  after,
+}: {
+  wordmark: string;
+  line: string;
+  after?: ReactNode;
+}) {
   return (
     <main
       id="top"
@@ -89,6 +106,8 @@ export function ComingSoon({ wordmark, line }: { wordmark: string; line: string 
         </p>
         <div className="holding-rule mt-23 h-px w-[min(320px,60%)]" />
       </div>
+
+      {after}
     </main>
   );
 }

@@ -3,3 +3,30 @@
 /* Required: without it Tailwind never scans the package and purges every class that
    only appears inside @seri/ui. */
 @source "../../../packages/ui/src";
+
+/*
+ * .holding-waitlist lives here rather than in packages/ui/styles/globals.css's holding block:
+ * that stylesheet is imported verbatim by apps/portal and apps/lab too, and this class only
+ * ever renders on this site's /holding page (components/WaitlistForm.tsx). `holding-lift`,
+ * `holding-fade` and `--ease-brand` are all defined in the shared stylesheet imported above —
+ * CSS keyframe/custom-property resolution is global across the cascade, not scoped to the file
+ * that declared them, so referencing them here needs no re-import.
+ */
+@layer utilities {
+  /* 2400ms: the shared file's .holding-rule finishes at 2100 + 1600ms; the form is the last
+     thing to arrive. */
+  .holding-waitlist {
+    animation: holding-lift 1400ms var(--ease-brand) 2400ms both;
+  }
+}
+
+/* Continues the shared file's reduced-motion stagger (0/80/160/240/320/400ms) at 480ms for
+   this site's one extra element — same rationale as that file's own comment: the blanket
+   0.01ms rule collapses duration but leaves delay untouched, which would leave this element
+   invisible for 2.4s under `reduce`. */
+@media (prefers-reduced-motion: reduce) {
+  .holding-waitlist {
+    animation: holding-fade 100ms linear both !important;
+    animation-delay: 480ms !important;
+  }
+}
