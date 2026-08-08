@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { HONEYPOT_FIELD } from "../lib/waitlist/shared";
+import { HONEYPOT_FIELD, WAITLIST_INITIAL } from "../lib/waitlist/shared";
 import { addToWaitlist, isHoneypotTripped, parseEmail } from "../lib/waitlist/server";
-import { WAITLIST_COPY, WAITLIST_INITIAL } from "../lib/waitlistCopy";
+import { WAITLIST_COPY } from "../lib/waitlistCopy";
 import { submitWaitlistEmail } from "../app/actions/waitlist";
 
 /*

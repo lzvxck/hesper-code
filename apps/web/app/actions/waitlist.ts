@@ -1,12 +1,7 @@
 "use server";
 
-import { addToWaitlist, isHoneypotTripped, parseEmail } from "@/lib/waitlist/server";
+import { type WaitlistState, addToWaitlist, isHoneypotTripped, parseEmail } from "@/lib/waitlist/server";
 import { WAITLIST_COPY } from "@/lib/waitlistCopy";
-
-// A type-only export is erased before the bundler ever sees it, so it does not trip the
-// "use server" file's actual rule below. WAITLIST_INITIAL is a plain object rather than an
-// async function and cannot live here for the same reason — see lib/waitlistCopy.ts.
-export type WaitlistState = { status: "idle" | "ok" | "error"; message: string };
 
 export async function submitWaitlistEmail(
   _prev: WaitlistState,

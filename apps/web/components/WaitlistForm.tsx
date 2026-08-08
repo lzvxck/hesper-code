@@ -5,8 +5,8 @@ import { useActionState } from "react";
 import { Button } from "@seri/ui";
 
 import { submitWaitlistEmail } from "@/app/actions/waitlist";
-import { HONEYPOT_FIELD } from "@/lib/waitlist/shared";
-import { WAITLIST_COPY, WAITLIST_INITIAL } from "@/lib/waitlistCopy";
+import { HONEYPOT_FIELD, WAITLIST_INITIAL } from "@/lib/waitlist/shared";
+import { WAITLIST_COPY } from "@/lib/waitlistCopy";
 
 /*
  * A real HTML form pointed at a Server Action (`action={formAction}`), so the no-JS browser
