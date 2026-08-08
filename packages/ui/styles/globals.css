@@ -231,6 +231,11 @@
     );
     animation: holding-rule-open 1600ms var(--ease-brand) 2100ms both;
   }
+
+  /* 2400ms: the rule finishes at 2100 + 1600; the form is the last thing to arrive. */
+  .holding-waitlist {
+    animation: holding-lift 1400ms var(--ease-brand) 2400ms both;
+  }
 }
 
 @keyframes holding-sunrise {
@@ -398,7 +403,8 @@
   .holding-wordmark,
   .holding-headline,
   .holding-line,
-  .holding-rule {
+  .holding-rule,
+  .holding-waitlist {
     animation: holding-fade 100ms linear both !important;
   }
 
@@ -420,6 +426,9 @@
   }
   .holding-rule {
     animation-delay: 400ms !important;
+  }
+  .holding-waitlist {
+    animation-delay: 480ms !important;
   }
 
   /* The idle loops carry no information at all — they are only movement. Drop them. */
