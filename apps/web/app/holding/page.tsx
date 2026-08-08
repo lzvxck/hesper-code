@@ -15,8 +15,11 @@ import { WaitlistForm } from "@/components/WaitlistForm";
  * reverted, not the flag left off.
  *
  * <WaitlistForm> goes through ComingSoon's `after` prop rather than sitting outside <main> as a
- * sibling: `after` renders inside the same min-h-[100svh]/justify-center <main>, so the form
- * lands inside the first viewport without this page reaching into ComingSoon's internals.
+ * sibling: `after` renders inside the same min-h-[100svh]/justify-center <main>, without this
+ * page reaching into ComingSoon's internals. min-h-[100svh] is a floor, not a cap, so it does
+ * not by itself guarantee the form stays within the first viewport for every possible content
+ * height — that has been measured, not assumed, at 1440x900 and 390x844 (both motion settings);
+ * re-check those sizes if this page's copy or WaitlistForm's markup grows materially.
  */
 export default function Holding() {
   return (

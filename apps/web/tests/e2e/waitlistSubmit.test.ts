@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { WAITLIST_COPY } from "../../lib/waitlistCopy";
+import { HONEYPOT_FIELD } from "../../lib/waitlist/shared";
 
 // `proc.kill()` alone reports success and leaves the `next start` process it launched still
 // running — the exact Windows leak apps/cli/src/tools/spawnCollect.ts's killTree exists to
@@ -113,7 +114,7 @@ async function submitWaitlist(pageUrl: string, email: string, honeypot: string):
   const form = new FormData();
   for (const [name, value] of fields) form.append(name, value);
   form.append("email", email);
-  form.append("company", honeypot);
+  form.append(HONEYPOT_FIELD, honeypot);
 
   return fetch(target, { method: "POST", body: form });
 }

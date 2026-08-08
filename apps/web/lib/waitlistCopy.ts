@@ -2,7 +2,7 @@ export const WAITLIST_COPY = {
   label: "Email address",
   placeholder: "you@example.com",
   submit: "Join the waitlist",
-  consent: "One email when seri is available, and nothing else. Leave the list at any time.",
+  consent: "One email when seri is available, and nothing else.",
   privacyLink: "Privacy",
   // Identical for a new address and one already stored — phrased as a state, not an event, so
   // the response cannot be used to test whether an address is already on the list.
