@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { HONEYPOT_FIELD, WAITLIST_INITIAL } from "../lib/waitlist/shared";
@@ -61,20 +61,6 @@ describe("addToWaitlist", () => {
 
     expect((await addToWaitlist("foo@example.com", "holding", client)).ok).toBe(false);
   });
-
-  test("success and duplicate copy are identical and state-phrased", async () => {
-    expect(WAITLIST_COPY.ok).not.toMatch(/thank|added|signed up|welcome/i);
-
-    const fresh = fakeSupabase({ error: null });
-    const duplicate = fakeSupabase({ error: postgrestError("23505") });
-
-    // The same mapping submitWaitlistEmail applies to addToWaitlist's result: ok -> WAITLIST_COPY.ok.
-    const toMessage = (result: { ok: boolean }) => (result.ok ? WAITLIST_COPY.ok : WAITLIST_COPY.failed);
-
-    expect(toMessage(await addToWaitlist("foo@example.com", "holding", fresh.client))).toEqual(
-      toMessage(await addToWaitlist("foo@example.com", "holding", duplicate.client)),
-    );
-  });
 });
 
 describe("honeypot", () => {
@@ -114,5 +100,64 @@ describe("honeypot", () => {
 
     expect(isHoneypotTripped(form)).toBe(false);
     expect(await submitWaitlistEmail(WAITLIST_INITIAL, form)).toEqual({ status: "error", message: WAITLIST_COPY.failed });
+  });
+});
+
+/*
+ * Deliberately the last describe in this file, and that ordering is load-bearing rather than
+ * incidental: getSupabaseClient() memoizes its client in a module-level variable, so once this
+ * block gives it real env vars and constructs one, it stays constructed for the rest of the
+ * process. The honeypot tests above depend on it NOT being constructed yet (their whole proof
+ * is that a client throws when built with no env present) — running after them means that proof
+ * is measured before this block ever touches the singleton.
+ *
+ * Drives the real submitWaitlistEmail action (not a parallel reimplementation of its mapping)
+ * against a local Bun.serve stub, so a change to the action's actual behavior turns this test
+ * red — the fake-client version this replaces reimplemented the mapping locally and could not.
+ */
+describe("submitWaitlistEmail: success and duplicate copy", () => {
+  let stub: ReturnType<typeof Bun.serve>;
+  let stubStatus = 201;
+
+  beforeAll(() => {
+    stub = Bun.serve({
+      port: 0,
+      fetch() {
+        // PostgREST answers a unique-violation insert with 409 and a {code: "23505", ...} body;
+        // any other insert succeeds with 201 and an empty array.
+        return new Response(
+          stubStatus === 201 ? "[]" : JSON.stringify(postgrestError("23505")),
+          { status: stubStatus },
+        );
+      },
+    });
+    process.env.SUPABASE_URL = `http://127.0.0.1:${stub.port}`;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "stub";
+  });
+
+  afterAll(() => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    stub.stop(true);
+  });
+
+  test("are identical and state-phrased", async () => {
+    expect(WAITLIST_COPY.ok).not.toMatch(/thank|added|signed up|welcome/i);
+
+    stubStatus = 201;
+    const freshForm = new FormData();
+    freshForm.set("email", "fresh@example.com");
+    freshForm.set(HONEYPOT_FIELD, "");
+    const fresh = await submitWaitlistEmail(WAITLIST_INITIAL, freshForm);
+
+    stubStatus = 409;
+    const duplicateForm = new FormData();
+    duplicateForm.set("email", "duplicate@example.com");
+    duplicateForm.set(HONEYPOT_FIELD, "");
+    const duplicate = await submitWaitlistEmail(WAITLIST_INITIAL, duplicateForm);
+
+    expect(fresh).toEqual({ status: "ok", message: WAITLIST_COPY.ok });
+    expect(duplicate).toEqual({ status: "ok", message: WAITLIST_COPY.ok });
+    expect(fresh.message).toEqual(duplicate.message);
   });
 });
