@@ -31,7 +31,7 @@ export default function Privacy() {
         <section>
           <h2 className="text-[16px] leading-[1.3] font-bold tracking-[-0.3px]">Where it is stored</h2>
           <p className="mt-6 text-ink-subtle">
-            A Supabase database, reachable only by this project&#x27;s server.
+            In a database reachable only by our own servers, never directly by a browser.
           </p>
         </section>
 
