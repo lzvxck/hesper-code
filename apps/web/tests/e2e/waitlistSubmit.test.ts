@@ -101,10 +101,10 @@ function extractActionForm(html: string): { action: string; fields: [string, str
   return { action: actionMatch ? actionMatch[1] : "", fields };
 }
 
-// The real form's encType is multipart/form-data (React's own choice for a Server Action),
-// and that is load-bearing: a x-www-form-urlencoded replay of the identical fields gets a 200
-// with the ordinary marketing-page markup — Next never recognizes it as an action submission at
-// all, so the insert assertion below would pass vacuously. Measured, not assumed.
+// The real form's encType is multipart/form-data (React's own choice for a Server Action, and
+// confirmed in the served HTML) and that is load-bearing: a x-www-form-urlencoded replay of the
+// identical fields is not recognized as an action submission at all, so no insert is recorded
+// and the test fails outright. Measured, not assumed.
 async function submitWaitlist(pageUrl: string, email: string, honeypot: string): Promise<Response> {
   const html = await (await fetch(pageUrl)).text();
   const { action, fields } = extractActionForm(html);
