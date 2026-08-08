@@ -48,6 +48,9 @@ export function WaitlistForm() {
           </Button>
         </form>
 
+        {/* Always rendered, even while state.message is empty: a live region that already
+            exists in the accessibility tree announces a later update immediately, where one
+            mounted only once there is something to say can miss it depending on timing. */}
         <p role="status" aria-live="polite" className="mt-8 text-on-ink-subtle">
           {state.message}
         </p>
