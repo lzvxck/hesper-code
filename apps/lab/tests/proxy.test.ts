@@ -55,4 +55,16 @@ describe("apps/lab proxy", () => {
 
     expect(rewriteTarget("/")).toBeNull();
   });
+
+  /*
+   * The waitlist form POSTs to a Server Action at `/`. This pins the middleware half of that
+   * path — a POST still rewrites to /holding — but it does NOT close the open question of
+   * whether Next resolves the Server Action reference across that rewrite; the e2e test does.
+   */
+  test("still rewrites a POST to / while the flag is on", () => {
+    const header = proxy(new NextRequest(`${ORIGIN}/`, { method: "POST" })).headers.get(
+      "x-middleware-rewrite",
+    );
+    expect(header === null ? null : new URL(header).pathname).toBe("/holding");
+  });
 });
