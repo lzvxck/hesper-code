@@ -1,8 +1,7 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getSupabaseClient } from "./supabase";
-
-export const HONEYPOT_FIELD = "company";
+import { getSupabaseClient } from "../supabase";
+import { HONEYPOT_FIELD } from "./shared";
 
 export const emailSchema = z.string().trim().toLowerCase().max(254).pipe(z.email());
 

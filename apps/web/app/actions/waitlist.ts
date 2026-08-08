@@ -1,6 +1,6 @@
 "use server";
 
-import { addToWaitlist, isHoneypotTripped, parseEmail } from "@/lib/waitlist";
+import { addToWaitlist, isHoneypotTripped, parseEmail } from "@/lib/waitlist/server";
 import { WAITLIST_COPY } from "@/lib/waitlistCopy";
 
 // A type-only export is erased before the bundler ever sees it, so it does not trip the

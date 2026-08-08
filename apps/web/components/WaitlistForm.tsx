@@ -5,7 +5,7 @@ import { useActionState } from "react";
 import { Button } from "@seri/ui";
 
 import { submitWaitlistEmail } from "@/app/actions/waitlist";
-import { HONEYPOT_FIELD } from "@/lib/waitlist";
+import { HONEYPOT_FIELD } from "@/lib/waitlist/shared";
 import { WAITLIST_COPY, WAITLIST_INITIAL } from "@/lib/waitlistCopy";
 
 /*
