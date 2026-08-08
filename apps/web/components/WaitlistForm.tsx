@@ -18,7 +18,7 @@ export function WaitlistForm() {
   const [state, formAction, pending] = useActionState(submitWaitlistEmail, WAITLIST_INITIAL);
 
   return (
-    <section className="holding-waitlist relative z-10 w-full px-11 pb-29 md:pb-34">
+    <section className="holding-waitlist relative z-10 w-full px-11 pt-29 pb-29 md:pt-34 md:pb-34">
       <div className="mx-auto flex w-full max-w-[420px] flex-col items-center">
         <form action={formAction} className="flex w-full flex-col gap-8">
           <label htmlFor="waitlist-email" className="text-on-ink-subtle">
